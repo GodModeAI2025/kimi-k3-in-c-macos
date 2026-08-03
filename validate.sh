@@ -6,6 +6,11 @@ TMP=${TMPDIR:-/tmp}/kimi-k3-macos-port-validate.$$
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 mkdir -p "$TMP"
 
+# `\b` above is deliberately NOT used: it is a GNU regex extension, and BSD grep -- which
+# is what /usr/bin/grep is on macOS -- treats the escape as a literal `b`, so the pattern
+# would stop matching and this NEGATIVE assertion would pass silently on the one platform
+# the package exists to support. POSIX bracket expressions behave the same everywhere.
+
 python3 -m py_compile "$HERE/apply_macos_port.py" "$HERE/selftest.py"
 "$HERE/selftest.py"
 "$HERE/tests/build-selection-smoke.py"
@@ -29,7 +34,7 @@ if command -v clang >/dev/null 2>&1; then
     if clang --target=aarch64-none-elf -ffreestanding -std=c99 -O2 \
         -ffp-contract=off -Wall -Wextra -Werror \
         -S "$HERE/tests/neon-smoke.c" -o "$TMP/neon-smoke.s" >/dev/null 2>&1 && \
-       ! grep -Eq '\b(fmla|fmadd)\b' "$TMP/neon-smoke.s"; then
+       ! grep -Eq '[[:space:]](fmla|fmadd)[[:space:]]' "$TMP/neon-smoke.s"; then
         echo "validate: arm64 NEON compile smoke passed (no fused multiply-add)"
     else
         echo "validate: clang is present but lacks a usable aarch64 bare-metal target" >&2

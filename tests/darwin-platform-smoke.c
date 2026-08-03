@@ -10,6 +10,10 @@
  *
  * The engine widens each counter to uint64_t before summing precisely because the real
  * fields are 32-bit; keep that cast if this stand-in is ever updated. */
+/* This prologue must stay identical to the one the ported sources use. It did not once:
+ * the test declared _DARWIN_C_SOURCE while src/cli/k3_run.c still declared only
+ * _POSIX_C_SOURCE, so the test compiled a struct rusage that had ru_maxrss while the
+ * real file compiled one that did not. A green suite hid a hard macOS build failure. */
 #define _DARWIN_C_SOURCE 1
 #include <fcntl.h>
 #include <stdint.h>

@@ -89,7 +89,16 @@ Der Port ändert nicht nur Compiler-Flags:
 7. Alle Build-Targets — auch `debug`, `asan` und `ubsan` — setzen `-ffp-contract=off`.
    Auf aarch64 gehört FMA zur Basis-ISA, deshalb würde Clang die skalare Reduktion sonst
    verschmelzen und das Ergebnis wiche von der Referenz ab.
-8. Die GitHub-Actions-Konfiguration erhält native Jobs für `macos-26`, `macos-15` und
+8. `k3_run.c` schaltet auf `_DARWIN_C_SOURCE` um. Unter `_POSIX_C_SOURCE` ersetzt Darwin
+   die benannten Felder von `struct rusage` durch `ru_opaque[14]`; ohne diese Änderung
+   übersetzt die Datei auf macOS überhaupt nicht.
+9. Lesevorgänge werden auf 1 GiB pro Aufruf begrenzt. Darwin lehnt jede Anforderung über
+   `INT_MAX` mit `EINVAL` ab, während Linux kappt und eine kurze positive Länge liefert;
+   `embed_tokens`, `lm_head` (je 2,35 GB) und Trunk-Layer 0 (2,34 GB) liegen darüber.
+10. Verfügbarer Speicher zählt `free + inactive`. Die spekulativen Seiten stecken in XNU
+   bereits in `free_count`. Auf macOS entscheidet die **installierte** Speichermenge über
+   die harte Untergrenze, damit ein ausgelasteter 64-GiB-Mac nicht abgewiesen wird.
+11. Die GitHub-Actions-Konfiguration erhält native Jobs für `macos-26`, `macos-15` und
    `macos-26-intel`, jeweils mit Make- und CMake-Tests.
 
 ## Paket prüfen

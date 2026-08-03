@@ -73,10 +73,47 @@ def main() -> int:
         assert "arm_neon.h" in ops and ops.count("vcvt_f64_f32") >= 8
         cli = (root / "src/cli/k3_run.c").read_text(encoding="utf-8")
         assert "HOST_VM_INFO64" in cli and "return (double)ru.ru_maxrss;" in cli
-        download = (root / "scripts/download-model.sh").read_text(encoding="utf-8")
-        assert "find -printf" not in download and "stat -c" not in download
-        pack = (root / "scripts/pack-trunk.sh").read_text(encoding="utf-8")
-        assert 'find "$MODEL" -maxdepth' not in pack
+        # Darwin's <sys/resource.h> replaces the named rusage members with ru_opaque[14]
+        # unless __DARWIN_C_LEVEL is full, and _POSIX_C_SOURCE alone pins it below that.
+        # Without this, `ru.ru_maxrss` simply does not compile on macOS.
+        assert "#define _DARWIN_C_SOURCE" in cli, "k3_run.c must raise the Darwin C level"
+        # XNU puts the speculative pages inside free_count already; adding them again
+        # overstates reclaimable memory by a whole page class.
+        assert "vm.speculative_count" not in cli, "speculative pages must not be counted twice"
+
+        # Darwin rejects a pread above INT_MAX with EINVAL instead of returning a short
+        # count, and both embed/lm_head and trunk layer 0 are larger than that.
+        st_src = (root / "src/io/k3_st.c").read_text(encoding="utf-8")
+        trunk_src = (root / "src/io/k3_trunk.c").read_text(encoding="utf-8")
+        for name, src in (("k3_st.c", st_src), ("k3_trunk.c", trunk_src)):
+            assert "k3_read_span" in src, f"{name} must clamp oversized preads"
+
+        # The hugepage fallback must key on the PLATFORM. Testing `defined(MADV_HUGEPAGE)`
+        # is a visibility test, and glibc hides that macro under _POSIX_C_SOURCE, so it
+        # silently disabled the 2 MB arena on Linux too.
+        cache = (root / "src/cache/k3_cache.c").read_text(encoding="utf-8")
+        for name, src in (("k3_cache.c", cache), ("k3_trunk.c", trunk_src)):
+            head = src.split("const int huge", 1)[0]
+            assert head.rstrip().endswith("#if defined(__APPLE__)"), \
+                f"{name}: the huge fallback must test __APPLE__, not MADV_HUGEPAGE"
+        # Assert on the FLAGS, not on a contiguous "find -printf": upstream's line is
+        # `find "$DEST" -maxdepth 1 -name '*.safetensors' -printf '%s\n'`, so the literal
+        # string never appears and the old assertion was true of the unpatched file too.
+        # Comment lines are stripped first, since the replacements mention the flags by
+        # name while explaining why they are gone.
+        def code_only(text: str) -> str:
+            return "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+
+        for relative, banned in (
+            ("scripts/download-model.sh", ("-printf", "-maxdepth", "stat -c")),
+            ("scripts/pack-trunk.sh", ("-printf", "-maxdepth", "stat -c")),
+            # /proc is legitimately still read in the doctor's Linux branch, so it is not
+            # banned here -- only the GNU-only flags that have no BSD equivalent.
+            ("scripts/k3-doctor.sh", ("-printf", "-maxdepth", "stat -c")),
+        ):
+            body = code_only((root / relative).read_text(encoding="utf-8"))
+            for flag in banned:
+                assert flag not in body, f"{relative} still uses GNU-only {flag}"
         ci = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         # macos-26 is the newest generally-available image and the closest proxy for the
         # macOS 27 target; the Intel line ends at macOS 26, so it is pinned there.

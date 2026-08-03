@@ -474,9 +474,32 @@ static int k3_open_cache_bypassed(const char *path)
 #endif
 }
 
+/* Largest byte count handed to a single pread.
+ *
+ * Linux clamps a read to 0x7ffff000 and RETURNS that count, so a loop over a 2.35 GB
+ * tensor simply goes round twice. Darwin does not: XNU's read_internal rejects any
+ * request above INT_MAX outright with EINVAL, and the loops here treat a negative
+ * return as a fatal short read. embed_tokens and lm_head are 2.35 GB each as bf16, so
+ * on macOS the very first pread of the model would fail. Clamping costs one extra
+ * iteration on the two largest tensors and nothing anywhere else. */
+#define K3_READ_CHUNK ((size_t)1 << 30)
+
+static size_t k3_read_span(int64_t remaining)
+{
+    return (size_t)(remaining > (int64_t)K3_READ_CHUNK ? (int64_t)K3_READ_CHUNK : remaining);
+}
+
 /* ------------------------------------------------------------------ helpers */
 '''
     changed.append(("safetensors cache-bypass helper", replace_once(root, "src/io/k3_st.c", old, new)))
+
+    old = r'''        ssize_t r = pread(s->fd[t->shard], (char *)buf + got,
+                          (size_t)(t->nbytes - got), (off_t)(t->off + got));
+'''
+    new = r'''        ssize_t r = pread(s->fd[t->shard], (char *)buf + got,
+                          k3_read_span(t->nbytes - got), (off_t)(t->off + got));
+'''
+    changed.append(("safetensors oversized read", replace_once(root, "src/io/k3_st.c", old, new)))
 
     old = r'''    /* A second descriptor on the same file, for streamed expert reads that must not go
      * through the page cache. Optional: if the filesystem refuses O_DIRECT the reader
@@ -521,6 +544,15 @@ def patch_trunk(root: Path) -> list[tuple[str, str]]:
 /* WHERE THE TIME IN A BIND ACTUALLY GOES.
 '''
     new = r'''static int k3_alloc_direct(void **out, size_t bytes);   /* defined below */
+
+/* See k3_st.c: Darwin's read path rejects any request above INT_MAX with EINVAL rather
+ * than returning a short count. Trunk layer 0 is 2.34 GB, so it needs the same clamp. */
+#define K3_READ_CHUNK ((size_t)1 << 30)
+
+static size_t k3_read_span(int64_t remaining)
+{
+    return (size_t)(remaining > (int64_t)K3_READ_CHUNK ? (int64_t)K3_READ_CHUNK : remaining);
+}
 
 /* Open the packed trunk with the strongest cache-bypass policy the platform offers.
  * tr->direct means "cache bypass active", not specifically the Linux O_DIRECT flag. */
@@ -608,10 +640,16 @@ static const char *k3_stream_mode_name(int direct)
     old = r'''    const int huge = !getenv("K3_NOHUGE");
     const size_t align = huge ? (2u << 20) : 4096u;
 '''
-    new = r'''#if defined(MADV_HUGEPAGE)
-    const int huge = !getenv("K3_NOHUGE");
-#else
+    # Key this on the PLATFORM, not on whether MADV_HUGEPAGE happens to be visible.
+    # Visibility depends on the feature-test macros of the translation unit, so a
+    # `#if defined(MADV_HUGEPAGE)` test silently disables the 2 MB arena on Linux too in
+    # any file that does not set _GNU_SOURCE -- which is a behaviour change on the
+    # reference platform, not a macOS fallback. The madvise call site keeps its own
+    # visibility guard, which is upstream's and is the correct test for that line.
+    new = r'''#if defined(__APPLE__)
     const int huge = 0;                /* Darwin has no Linux transparent hugepage hint */
+#else
+    const int huge = !getenv("K3_NOHUGE");
 #endif
     const size_t align = huge ? (2u << 20) : 4096u;
 '''
@@ -635,6 +673,14 @@ static const char *k3_stream_mode_name(int direct)
 #endif
 '''
     changed.append(("trunk prefetch advisory", replace_once(root, "src/io/k3_trunk.c", old, new)))
+
+    old = r'''        ssize_t r = pread(tr->fd, dst + got, (size_t)(lay->nbytes - got),
+                          (off_t)(lay->file_off + got));
+'''
+    new = r'''        ssize_t r = pread(tr->fd, dst + got, k3_read_span(lay->nbytes - got),
+                          (off_t)(lay->file_off + got));
+'''
+    changed.append(("trunk oversized read", replace_once(root, "src/io/k3_trunk.c", old, new)))
     return changed
 
 
@@ -642,10 +688,14 @@ def patch_cache(root: Path) -> list[tuple[str, str]]:
     old = r'''        const int huge = !getenv("K3_NOHUGE");
         const size_t al = huge ? (2u << 20) : 4096u;
 '''
-    new = r'''#if defined(MADV_HUGEPAGE)
-        const int huge = !getenv("K3_NOHUGE");
+    # As in k3_trunk.c: test the platform, not the macro's visibility. This file compiles
+    # under _POSIX_C_SOURCE alone, and glibc hides MADV_HUGEPAGE behind __USE_MISC, so a
+    # `#if defined(MADV_HUGEPAGE)` test is FALSE on Linux here and would quietly drop the
+    # expert arena from 2 MB to 4 KB alignment on the reference platform.
+    new = r'''#if defined(__APPLE__)
+        const int huge = 0;            /* Darwin has no transparent-hugepage hint */
 #else
-        const int huge = 0;            /* macOS has no MADV_HUGEPAGE */
+        const int huge = !getenv("K3_NOHUGE");
 #endif
         const size_t al = huge ? (2u << 20) : 4096u;
 '''
@@ -654,6 +704,27 @@ def patch_cache(root: Path) -> list[tuple[str, str]]:
 
 def patch_cli(root: Path) -> list[tuple[str, str]]:
     changed: list[tuple[str, str]] = []
+    # Darwin's <sys/sys/cdefs.h> sets __DARWIN_C_LEVEL to _POSIX_C_SOURCE whenever that is
+    # defined and _DARWIN_C_SOURCE is not. <sys/resource.h> then declares
+    #     #if __DARWIN_C_LEVEL < __DARWIN_C_FULL
+    #             long ru_opaque[14];
+    # instead of the named members, so `ru.ru_maxrss` does not compile at all -- the whole
+    # point of the Darwin branch below. _DARWIN_C_SOURCE is a superset of POSIX 2008 here,
+    # so nothing else in this file loses a declaration.
+    old = r'''#define _POSIX_C_SOURCE 200809L
+
+#include <math.h>
+'''
+    new = r'''#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE       /* struct rusage exposes ru_maxrss only at the full level */
+#else
+#define _POSIX_C_SOURCE 200809L
+#endif
+
+#include <math.h>
+'''
+    changed.append(("CLI Darwin feature level", replace_once(root, "src/cli/k3_run.c", old, new)))
+
     old = r'''#include <time.h>
 #include <sys/resource.h>
 
@@ -715,9 +786,19 @@ static double peak_rss_bytes(void)
 }
 
 /* Reclaimable memory rather than just completely free pages. Linux exposes this as
- * MemAvailable. Darwin exposes page classes, so use free, inactive and speculative
- * pages. Purgeable pages are not added separately because they can overlap other VM
- * classes. Returns 0 if it cannot be measured. */
+ * MemAvailable. Darwin exposes page classes, so use free plus inactive.
+ *
+ * speculative_count is deliberately NOT added: XNU's vm_stats() fills the struct as
+ *     stat->free_count = vm_page_free_count + speculative_count;
+ *     stat->speculative_count = speculative_count;
+ * so the speculative pages are ALREADY inside free_count, and adding them again counts
+ * that class twice. (The vm_stat command-line tool subtracts them back out before it
+ * prints "Pages free", which is why the two look independent there and are not here.)
+ *
+ * This stays deliberately conservative. Active file-backed pages are also reclaimable
+ * on Darwin but are not counted, because over-reporting here would wave a machine
+ * through into a 1.56 TB download that it cannot actually serve. Returns 0 if it cannot
+ * be measured. */
 static double mem_available_bytes(void)
 {
 #if defined(__APPLE__)
@@ -730,8 +811,8 @@ static double mem_available_bytes(void)
         mach_port_deallocate(mach_task_self(), host);
         return 0.0;
     }
-    const uint64_t pages = (uint64_t)vm.free_count + (uint64_t)vm.inactive_count +
-                           (uint64_t)vm.speculative_count;
+    /* natural_t is 32-bit; widen before summing. */
+    const uint64_t pages = (uint64_t)vm.free_count + (uint64_t)vm.inactive_count;
     mach_port_deallocate(mach_task_self(), host);
     return (double)pages * (double)page_size;
 #else
@@ -787,17 +868,32 @@ printf '%s\n' "Kimi K3, environment check ($OS/$ARCH)"
 
 # ------------------------------------------------------------------ toolchain --
 hdr "toolchain"
-if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; then
-    CCBIN=$(command -v cc || command -v gcc)
-    ok "C compiler: $($CCBIN --version 2>&1 | head -1)"
-else
-    if [ "$OS" = Darwin ]; then
-        bad "no C compiler found (run: xcode-select --install)"
-    else
-        bad "no C compiler found (install build-essential or equivalent)"
+# Presence on PATH is not evidence on macOS. /usr/bin/cc, /usr/bin/gcc, /usr/bin/make and
+# /usr/bin/git are xcrun shims that exist on a stock system whether or not the Command
+# Line Tools are installed; without them the shim prints "no developer tools were found"
+# and exits non-zero. Testing with `command -v` therefore always succeeds and the
+# xcode-select advice below could never print. Run the tool instead.
+CCBIN=""
+for candidate in cc gcc clang; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" --version >/dev/null 2>&1; then
+        CCBIN=$(command -v "$candidate")
+        break
     fi
+done
+if [ -n "$CCBIN" ]; then
+    ok "C compiler: $($CCBIN --version 2>&1 | head -1)"
+elif [ "$OS" = Darwin ]; then
+    bad "no working C compiler (run: xcode-select --install)"
+else
+    bad "no C compiler found (install build-essential or equivalent)"
 fi
-command -v make >/dev/null 2>&1 && ok "make: $(make --version 2>&1 | head -1)" || bad "make not found"
+if make --version >/dev/null 2>&1; then
+    ok "make: $(make --version 2>&1 | head -1)"
+elif [ "$OS" = Darwin ]; then
+    bad "make is not usable (run: xcode-select --install)"
+else
+    bad "make not found"
+fi
 if command -v python3 >/dev/null 2>&1; then
     ok "python3: $(python3 --version 2>&1)"
 else
@@ -850,8 +946,12 @@ if [ "$OS" = Darwin ]; then
     MEM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
     VMSTAT=$(vm_stat 2>/dev/null || true)
     PAGE_SIZE=$(printf '%s\n' "$VMSTAT" | awk '/page size of/ {gsub(/[^0-9]/,"",$8); print $8; exit}')
+    # Free plus inactive only, matching the engine's own mem_available_bytes(). Speculative
+    # pages are deliberately left out: in the raw Mach struct they are already inside
+    # free_count, and counting a class twice here would wave a machine through into a
+    # 1.56 TB download it cannot serve. Understating is the safe direction for this gate.
     AVAIL_PAGES=$(printf '%s\n' "$VMSTAT" | awk -F: '
-        /Pages free|Pages inactive|Pages speculative/ {
+        /^Pages free|^Pages inactive/ {
             gsub(/[^0-9]/,"",$2); s += $2
         }
         END {printf "%.0f", s+0}')
@@ -873,19 +973,51 @@ else
     AVAIL_GB=$MEM_GB
 fi
 
-# Preset boundaries follow the project's measured memory ladder. macOS reclaimable
-# memory is an estimate from free + inactive + speculative VM pages.
-if   [ "$AVAIL_GB" -ge 192 ]; then PRESET=server;      EXPECT="published Linux figure ~19-21 s/token"
-elif [ "$AVAIL_GB" -ge  96 ]; then PRESET=workstation; EXPECT="published Linux figure ~24 s/token"
-elif [ "$AVAIL_GB" -ge  32 ]; then PRESET=desktop;     EXPECT="published Linux figure ~28-31 s/token"
-elif [ "$AVAIL_GB" -ge  10 ]; then PRESET=laptop;      EXPECT="published Linux figure ~32 s/token"
+# Preset boundaries follow the project's measured memory ladder.
+#
+# The number the boundaries are applied to differs by platform, on purpose. Linux
+# MemAvailable is a kernel ESTIMATE that already accounts for reclaimable page cache, so
+# it is directly comparable to the ladder. The Darwin figure is free + inactive VM pages,
+# which deliberately omits reclaimable file-backed pages sitting in the active queue --
+# a real and often large pool. It therefore understates, and understating must not turn
+# into a refusal: a 64 GiB Mac in the middle of a working day can easily show under
+# 10 GiB free+inactive and still run this perfectly well once macOS evicts its caches.
+# So on Darwin the hard floor is checked against INSTALLED memory, and the instantaneous
+# figure only chooses the preset and triggers a "close some apps" warning.
+if [ "$OS" = Darwin ]; then
+    FLOOR_GB=$MEM_GB
+else
+    FLOOR_GB=$AVAIL_GB
+fi
+PRESET_GB=$AVAIL_GB
+[ "$PRESET_GB" -gt "$MEM_GB" ] 2>/dev/null && PRESET_GB=$MEM_GB
+
+if   [ "$PRESET_GB" -ge 192 ]; then PRESET=server;      EXPECT="published Linux figure ~19-21 s/token"
+elif [ "$PRESET_GB" -ge  96 ]; then PRESET=workstation; EXPECT="published Linux figure ~24 s/token"
+elif [ "$PRESET_GB" -ge  32 ]; then PRESET=desktop;     EXPECT="published Linux figure ~28-31 s/token"
+elif [ "$PRESET_GB" -ge  10 ]; then PRESET=laptop;      EXPECT="published Linux figure ~32 s/token"
 else PRESET=""; EXPECT=""; fi
 
-if [ -n "$PRESET" ]; then
+if [ "$FLOOR_GB" -lt 10 ] 2>/dev/null; then
+    if [ "$OS" = Darwin ]; then
+        bad "${MEM_GB} GiB installed, below the engine's measured floor (~8.2 GB peak RSS)"
+    else
+        bad "under 10 GiB available, below the engine's measured floor (~8.2 GB peak RSS)"
+    fi
+elif [ -n "$PRESET" ]; then
     ok "recommended memory preset: --preset $PRESET"
-    [ "$OS" = Linux ] && info "$EXPECT" || info "macOS speed must be measured on this Mac"
+    if [ "$OS" = Linux ]; then
+        info "$EXPECT"
+    else
+        info "macOS speed must be measured on this Mac"
+        info "free+inactive omits reclaimable cached files, so this is a lower bound"
+    fi
 else
-    bad "under 10 GiB reclaimable, below the engine's measured floor (~8.2 GB peak RSS)"
+    # Installed memory clears the floor, the instantaneous figure does not.
+    PRESET=laptop
+    warn "only ${AVAIL_GB} GiB free right now on a ${MEM_GB} GiB Mac; close applications"
+    info "starting anyway is usually fine: macOS evicts cached files under pressure"
+    ok "recommended memory preset: --preset $PRESET"
 fi
 
 # -------------------------------------------------------------------- storage --
@@ -910,7 +1042,15 @@ if [ -d "$TARGET" ]; then
             rm -f "$TMPF"
             if [ -n "${SECONDS_REAL:-}" ] && awk -v s="$SECONDS_REAL" 'BEGIN {exit !(s>0)}'; then
                 RATE=$(awk -v mb="$PROBE_MB" -v s="$SECONDS_REAL" 'BEGIN {printf "%.0f MB/s", mb/s}')
-                ok "sequential read probe: $RATE"
+                # Say what this number is. The file was written moments ago and is still
+                # in the buffer cache, and nothing here can evict it without privileges
+                # (BSD dd has no conv=fsync, and `purge` needs sudo). So the figure is an
+                # UPPER BOUND that may be measuring RAM, and reporting it as the disk's
+                # sequential rate would be the sort of confident wrong number that sends
+                # someone into a 1.56 TB download on a slow external drive.
+                ok "sequential read probe: $RATE (upper bound)"
+                info "the file is still cached, so this can measure RAM rather than the disk"
+                info "for a real figure use a probe larger than RAM, or the vendor spec"
                 info "the engine streams roughly 135 GB per token at the smallest budgets"
             else
                 warn "read probe completed, but its duration could not be parsed"

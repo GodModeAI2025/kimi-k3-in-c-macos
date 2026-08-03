@@ -57,12 +57,20 @@ if [ "$(uname -s)" != Darwin ]; then
     exit 1
 fi
 
+# On macOS git, make and cc exist in /usr/bin as xcrun shims even with no Command Line
+# Tools installed; they only fail when invoked. `command -v` would pass here on a fresh
+# Mac and the run would then die inside git with an unrelated-looking error, so check
+# that the developer tools are actually present and that each tool really runs.
+if ! xcode-select -p >/dev/null 2>&1; then
+    echo "Xcode Command Line Tools are not installed; run: xcode-select --install" >&2
+    exit 1
+fi
 for tool in git python3 make cc; do
-    command -v "$tool" >/dev/null 2>&1 || {
+    command -v "$tool" >/dev/null 2>&1 && "$tool" --version >/dev/null 2>&1 || {
         if [ "$tool" = cc ]; then
-            echo "missing C compiler; run: xcode-select --install" >&2
+            echo "C compiler present but not usable; run: xcode-select --install" >&2
         else
-            echo "missing required tool: $tool" >&2
+            echo "missing or unusable required tool: $tool" >&2
         fi
         exit 1
     }

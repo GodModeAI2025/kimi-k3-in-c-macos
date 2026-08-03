@@ -92,6 +92,55 @@ validate: arm64 NEON compile smoke passed (no fused multiply-add)
 validate: package checks passed
 ```
 
+## Zweite Review-Runde: was gegen Apples Quellen geprüft wurde
+
+Vier Befunde wurden nicht durch Lesen, sondern gegen den XNU-Quelltext bzw. Homebrews
+Quelltext verifiziert:
+
+- `bsd/sys/resource.h`: `struct rusage` liefert die benannten Felder nur bei
+  `__DARWIN_C_LEVEL >= __DARWIN_C_FULL`, sonst `long ru_opaque[14]`. `bsd/sys/cdefs.h`
+  setzt `__DARWIN_C_LEVEL = _POSIX_C_SOURCE`, sobald dieses definiert und
+  `_DARWIN_C_SOURCE` es nicht ist. `k3_run.c` deklarierte genau das — `ru.ru_maxrss` war
+  auf macOS **kein gültiges Feld**. Der Port hätte auf keinem Mac übersetzt.
+- `bsd/kern/sys_generic.c`: `read_internal` weist jede Anforderung über `INT_MAX` mit
+  `EINVAL` ab. Linux kappt stattdessen bei `0x7ffff000` und liefert eine kurze,
+  **positive** Länge, weshalb die Leseschleifen dort funktionieren. `embed_tokens` und
+  `lm_head` sind je 2,35 GB, Trunk-Layer 0 ist 2,34 GB — auf macOS wäre das erste `pread`
+  des Modells fehlgeschlagen.
+- `osfmk/kern/host.c`: `stat->free_count = vm_page_free_count + speculative_count`. Die
+  spekulativen Seiten stecken bereits in `free_count`; sie erneut zu addieren zählt eine
+  ganze Seitenklasse doppelt.
+- Homebrew `cmd/--prefix.rb`: druckt den Pfad und liefert 0 auch für nicht installierte
+  Formeln.
+
+Zusätzlich lokal gemessen statt vermutet:
+
+- `MADV_HUGEPAGE` ist unter `_POSIX_C_SOURCE` **auch auf Linux nicht sichtbar** (glibc
+  versteckt es hinter `__USE_MISC`). Der ursprüngliche `#if defined(MADV_HUGEPAGE)`-Test
+  hat die 2-MB-Arena des Expert-Caches damit auf der Referenzplattform abgeschaltet —
+  nachgewiesen über die Präprozessor-Ausgabe (`const int huge = 0;`). Die Guards prüfen
+  jetzt `__APPLE__`, also die Plattform statt der Makro-Sichtbarkeit.
+- `\b` in `grep -E` ist eine GNU-Erweiterung. BSD-`grep` (also `/usr/bin/grep` auf macOS)
+  behandelt die Sequenz als literales `b`, wodurch die **negative** FMA-Assertion in
+  `validate.sh` stillschweigend durchgelaufen wäre. Ersetzt durch POSIX-Klassen.
+- `command -v cc` kann auf macOS nicht fehlschlagen: `/usr/bin/cc`, `make` und `git` sind
+  `xcrun`-Shims, die auch ohne Command Line Tools existieren. Doctor und Installer rufen
+  die Werkzeuge jetzt auf, statt nur ihre Namen aufzulösen.
+
+### Tests, die vorher nichts prüfen konnten
+
+- Der Doctor-Smoke-Test hatte `hw.memsize` und die `vm_stat`-Summe im selben Preset-Eimer,
+  sodass ein vollständig kaputter `vm_stat`-Parse dieselbe Ausgabe erzeugt hätte.
+  Die Fixtures liegen jetzt in verschiedenen Eimern (256 GiB installiert, 38 GiB frei) —
+  verifiziert: ein absichtlich zerstörter Parse lässt den Test fehlschlagen.
+- `assert "find -printf" not in download` konnte nie fehlschlagen, weil die Upstream-Zeile
+  `find "$DEST" -maxdepth 1 -name '*.safetensors' -printf …` lautet und die Zeichenkette
+  so nie zusammenhängend vorkommt. Geprüft wird jetzt auf die Flags einzeln —
+  verifiziert durch Wiedereinbau von `find -maxdepth`.
+- `darwin-platform-smoke.c` verwendete `_DARWIN_C_SOURCE`, während `k3_run.c` nur
+  `_POSIX_C_SOURCE` deklarierte. Der Test übersetzte damit ein anderes `struct rusage` als
+  die echte Datei — genau deshalb blieb der harte Build-Fehler unentdeckt.
+
 ## Nicht in dieser Umgebung ausführbar
 
 Diese Grenze ist hart und wird hier nicht beschönigt:
