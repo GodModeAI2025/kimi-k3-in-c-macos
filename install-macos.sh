@@ -68,9 +68,14 @@ for tool in git python3 make cc; do
     }
 done
 
+# `brew --prefix libomp` prints a path and exits 0 even when libomp is NOT installed, so
+# a non-empty prefix is not evidence. Require the dylib, or the build fails at link.
 OMP_PREFIX=""
 if [ "$OPENMP_MODE" != off ] && command -v brew >/dev/null 2>&1; then
-    OMP_PREFIX=$(brew --prefix libomp 2>/dev/null || true)
+    _omp_candidate=$(brew --prefix libomp 2>/dev/null || true)
+    if [ -n "$_omp_candidate" ] && [ -r "$_omp_candidate/lib/libomp.dylib" ]; then
+        OMP_PREFIX=$_omp_candidate
+    fi
 fi
 if [ "$OPENMP_MODE" = required ] && [ -z "$OMP_PREFIX" ]; then
     echo "--with-openmp requires Homebrew libomp; run: brew install libomp" >&2

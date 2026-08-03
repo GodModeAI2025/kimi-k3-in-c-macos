@@ -19,11 +19,42 @@ class PortError(RuntimeError):
     pass
 
 
+# Every edit is staged in memory and flushed only after ALL of them have matched. A
+# transformer that writes as it goes turns one changed upstream line into a half-patched
+# checkout: the earlier files are rewritten, the failing one is left partly converted, and
+# re-running cannot recover because its own context no longer matches. The documented
+# "port an existing checkout" workflow runs straight into that, so writes are deferred.
+_STAGE: "dict[Path, tuple[str, bool]]" = {}
+
+
+def _stage_read(path: Path) -> str:
+    if path in _STAGE:
+        return _STAGE[path][0]
+    return path.read_text(encoding="utf-8")
+
+
+def _stage_write(path: Path, content: str, executable: bool = False) -> None:
+    _STAGE[path] = (content, executable or (path in _STAGE and _STAGE[path][1]))
+
+
+def _stage_exists(path: Path) -> bool:
+    return path in _STAGE or path.exists()
+
+
+def _commit(root: Path) -> None:
+    for path, (content, executable) in _STAGE.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        if executable:
+            path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    _STAGE.clear()
+
+
 def replace_once(root: Path, relative: str, old: str, new: str) -> str:
     path = root / relative
     if not path.is_file():
         raise PortError(f"missing expected file: {relative}")
-    text = path.read_text(encoding="utf-8")
+    text = _stage_read(path)
     # Check the complete replacement first: some replacements deliberately retain the
     # original Linux branch inside a new platform guard.
     if new in text:
@@ -32,7 +63,7 @@ def replace_once(root: Path, relative: str, old: str, new: str) -> str:
         count = text.count(old)
         if count != 1:
             raise PortError(f"expected one match in {relative}, found {count}")
-        path.write_text(text.replace(old, new, 1), encoding="utf-8")
+        _stage_write(path, text.replace(old, new, 1))
         return "changed"
     raise PortError(
         f"upstream context changed in {relative}; refusing an unsafe fuzzy replacement"
@@ -41,19 +72,14 @@ def replace_once(root: Path, relative: str, old: str, new: str) -> str:
 
 def write_file(root: Path, relative: str, content: str, executable: bool = False) -> str:
     path = root / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        current = path.read_text(encoding="utf-8")
-        if current == content:
+    if _stage_exists(path):
+        if _stage_read(path) == content:
             result = "already patched"
         else:
             raise PortError(f"{relative} already exists with different content")
     else:
-        path.write_text(content, encoding="utf-8")
         result = "created"
-    if executable:
-        mode = path.stat().st_mode
-        path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    _stage_write(path, content, executable)
     return result
 
 
@@ -99,8 +125,13 @@ ifeq ($(UNAME_S),Darwin)
   else
     ARCH ?=
   endif
-  BREW_OMP := $(shell command -v brew >/dev/null 2>&1 && brew --prefix libomp 2>/dev/null)
-  ifneq ($(BREW_OMP),)
+  # `brew --prefix libomp` PRINTS A PATH AND EXITS 0 even when libomp is not installed,
+  # so a non-empty answer proves nothing. Probe for the dylib itself: without this the
+  # default build on the very common "Homebrew present, libomp absent" Mac would append
+  # -lomp for a library that is not there and fail at link after compiling everything.
+  BREW_OMP  := $(shell command -v brew >/dev/null 2>&1 && brew --prefix libomp 2>/dev/null || true)
+  BREW_LIBOMP := $(if $(BREW_OMP),$(wildcard $(BREW_OMP)/lib/libomp.dylib),)
+  ifneq ($(BREW_LIBOMP),)
     OMP_CFLAGS ?= -Xpreprocessor -fopenmp -I$(BREW_OMP)/include
     OMP_LDFLAGS ?= -L$(BREW_OMP)/lib -Wl,-rpath,$(BREW_OMP)/lib -lomp
   else
@@ -161,8 +192,9 @@ macos:
 macos-openmp:
 	@test "$(UNAME_S)" = "Darwin" || { echo "macos-openmp target requires Darwin"; exit 1; }
 	@command -v brew >/dev/null 2>&1 || { echo "Homebrew is required; install it first"; exit 1; }
-	@OMP="$$(brew --prefix libomp 2>/dev/null)"; \
-	 test -n "$$OMP" || { echo "libomp is missing; run: brew install libomp"; exit 1; }; \
+	@OMP="$$(brew --prefix libomp 2>/dev/null || true)"; \
+	 test -n "$$OMP" && test -r "$$OMP/lib/libomp.dylib" \
+	   || { echo "libomp is missing; run: brew install libomp"; exit 1; }; \
 	 $(MAKE) \
 	   OMP_CFLAGS="-Xpreprocessor -fopenmp -I$$OMP/include" \
 	   OMP_LDFLAGS="-L$$OMP/lib -Wl,-rpath,$$OMP/lib -lomp" all
@@ -173,6 +205,31 @@ debug:
 	        LDFLAGS="-lm $(OMP_LDFLAGS)" all
 '''
     changed.append(("Makefile macOS targets", replace_once(root, "Makefile", old, new)))
+
+    # The sanitizer targets drop -ffp-contract=off and neutralise ARCH. On x86-64 that was
+    # harmless: clearing ARCH also clears -mavx2, so __AVX2__ goes undefined and the scalar
+    # path compiles. arm64 has no such escape -- __aarch64__ is defined by the target, not
+    # by a flag, so the NEON path is ALWAYS compiled. Without -ffp-contract=off clang fuses
+    # `vaddq_f64(v, vmulq_f64(a,b))` into FMLA (verified: 2 fmla in the generated assembly),
+    # which breaks the bit-exact reduction contract k3_ops.c documents and makes the op
+    # tests fail against their reference on a perfectly correct tree.
+    old = r'''asan:
+	$(MAKE) CFLAGS="-O1 -g -std=gnu99 $(WARN) -fsanitize=address,undefined -fno-omit-frame-pointer" \
+	        LDFLAGS="-lm -fsanitize=address,undefined" ARCH= all
+
+ubsan:
+	$(MAKE) CFLAGS="-O1 -g -std=gnu99 $(WARN) -fsanitize=undefined" \
+	        LDFLAGS="-lm -fsanitize=undefined" ARCH= all
+'''
+    new = r'''asan:
+	$(MAKE) CFLAGS="-O1 -g -std=gnu99 $(WARN) -fsanitize=address,undefined -fno-omit-frame-pointer -ffp-contract=off" \
+	        LDFLAGS="-lm -fsanitize=address,undefined" ARCH= all
+
+ubsan:
+	$(MAKE) CFLAGS="-O1 -g -std=gnu99 $(WARN) -fsanitize=undefined -ffp-contract=off" \
+	        LDFLAGS="-lm -fsanitize=undefined" ARCH= all
+'''
+    changed.append(("sanitizer FP contraction", replace_once(root, "Makefile", old, new)))
     return changed
 
 
@@ -747,7 +804,9 @@ else
     warn "python3 not found; download, trunk packing and analysis tools need it"
 fi
 if [ "$OS" = Darwin ]; then
-    if command -v brew >/dev/null 2>&1 && brew --prefix libomp >/dev/null 2>&1; then
+    # `brew --prefix libomp` succeeds for an UNINSTALLED formula too, so test the dylib.
+    OMP_PREFIX=$(command -v brew >/dev/null 2>&1 && brew --prefix libomp 2>/dev/null || true)
+    if [ -n "$OMP_PREFIX" ] && [ -r "$OMP_PREFIX/lib/libomp.dylib" ]; then
         HAVE_BREW_OMP=1
         ok "OpenMP: Homebrew libomp detected (default make will use it)"
     else
@@ -915,17 +974,15 @@ def patch_doctor(root: Path) -> list[tuple[str, str]]:
     path = root / "scripts/k3-doctor.sh"
     if not path.is_file():
         raise PortError("missing expected file: scripts/k3-doctor.sh")
-    text = path.read_text(encoding="utf-8")
+    text = _stage_read(path)
     marker = "k3-doctor, check whether this Linux or macOS machine can run Kimi K3"
     if marker in text:
         result = "already patched"
     else:
         if "LINUX ONLY" not in text or "k3-doctor: this script and the streaming engine are Linux-only" not in text:
             raise PortError("upstream context changed in scripts/k3-doctor.sh")
-        path.write_text(DOCTOR, encoding="utf-8")
         result = "changed"
-    mode = path.stat().st_mode
-    path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    _stage_write(path, DOCTOR if result == "changed" else text, executable=True)
     return [("cross-platform machine doctor", result)]
 
 
@@ -983,6 +1040,10 @@ This port supports native builds on both Apple Silicon (`arm64`) and Intel (`x86
 keeps the Linux behavior intact while mapping the operating-system-specific pieces to
 Darwin equivalents.
 
+Apple Silicon is the forward-looking target. macOS 26 (Tahoe) was announced as the last
+release supporting Intel Macs, so on macOS 27 and later only the `arm64` path is
+reachable. The `x86_64` path is retained for Intel Macs still on macOS 26 or earlier.
+
 ## Build
 
 Install Apple's command-line tools once:
@@ -1007,6 +1068,8 @@ make test
 ```
 
 A normal `make` also detects Homebrew `libomp` automatically when it is already installed.
+Detection probes for `$(brew --prefix libomp)/lib/libomp.dylib` rather than trusting the
+exit status of `brew --prefix`, which reports a path for uninstalled formulae too.
 CMake is supported as well:
 
 ```bash
@@ -1067,6 +1130,16 @@ OpenMP. It must not be reused as an Apple Silicon prediction. This port establis
 correct native arm64 build, two hand-written NEON dot-product paths and macOS I/O
 behavior. It deliberately does not claim full-model Apple Silicon performance that has
 not been measured against the 1.56 TB checkpoint on actual Apple hardware.
+
+## Numerical reproducibility
+
+Every build target passes `-ffp-contract=off`, including `debug`, `asan` and `ubsan`.
+This is not optional on Apple Silicon. The reduction loops are written as
+`s0 += w[i] * x[i]` in a deliberate four-accumulator split, and aarch64 has fused
+multiply-add in its baseline ISA, so clang will fuse those statements unless told not to
+and the result stops matching the reference the op tests compare against. On x86-64 the
+same targets get away with it only because clearing `ARCH` also drops `-mfma`, leaving
+the compiler no FMA instruction to emit; aarch64 has no such accident to rely on.
 '''
 
 
@@ -1120,15 +1193,18 @@ def patch_ci(root: Path) -> list[tuple[str, str]]:
   # pointers, where a missing -Wpointer-arith silently strides by one byte.
   strict-warnings:
 '''
-    new = r'''  # Native Darwin coverage on both architectures. The standard macos-15 label is
-  # Apple Silicon; macos-15-intel keeps the final supported x86-64 macOS line covered.
+    new = r'''  # Native Darwin coverage. macos-26 is the newest generally-available image and is the
+  # closest proxy for the macOS 27 target; macos-15 keeps the previous major honest.
+  # Both are Apple Silicon. macos-26-intel covers the x86-64 line, which ends with
+  # macOS 26 -- Apple announced Tahoe as the last Intel-capable release, so no Intel
+  # runner will ever exercise macOS 27. Add a macos-27 entry once that image is GA.
   macos-build-and-test:
     name: build + test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, macos-15-intel]
+        os: [macos-26, macos-15, macos-26-intel]
     steps:
       - uses: actions/checkout@v7
       - name: Toolchain
@@ -1165,6 +1241,7 @@ def patch_ci(root: Path) -> list[tuple[str, str]]:
 
 
 def apply(root: Path) -> list[tuple[str, str]]:
+    _STAGE.clear()          # never inherit a previous (possibly failed) run's staged edits
     required = ["Makefile", "CMakeLists.txt", "README.md", "src/core/k3_ops.c"]
     for relative in required:
         if not (root / relative).exists():
@@ -1186,6 +1263,8 @@ def apply(root: Path) -> list[tuple[str, str]]:
         patch_ci,
     ):
         changes.extend(operation(root))
+    # Nothing has touched the working tree yet: every replacement matched, so flush.
+    _commit(root)
     return changes
 
 

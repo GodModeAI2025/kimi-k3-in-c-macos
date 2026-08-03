@@ -8,6 +8,10 @@ Upstream-Commit `85ab2cd901aa81b70caac7711f06864d594b8ff3` festgelegt und unters
 - Stock Apple Clang ohne weitere C-Bibliotheken
 - optionales Multi-Threading über Homebrew `libomp`
 
+Zielplattform ist **macOS 27 auf Apple Silicon**. macOS 26 (Tahoe) ist die letzte
+Intel-fähige Version, deshalb ist der `x86_64`-Pfad nur noch für ältere Macs da und wird
+auf macOS 27 nie ausgeführt.
+
 Das Paket enthält absichtlich **keine Modellgewichte** und auch keine Kopie des gesamten
 Upstream-Repositories. Der Installer klont den exakt geprüften Stand, wendet den Port
 kontextgeprüft an, baut ihn und führt die Tests ohne Modellgewichte aus.
@@ -77,11 +81,16 @@ Der Port ändert nicht nur Compiler-Flags:
 3. `ru_maxrss` wird auf Darwin korrekt als Byte-Wert behandelt; Linux bleibt bei KiB.
 4. Verfügbarer Speicher wird über Mach-VM-Statistiken statt `/proc/meminfo` ermittelt.
 5. OpenMP ist auf macOS optional. Stock Apple Clang baut single-threaded; Homebrew
-   `libomp` aktiviert den threaded Build.
+   `libomp` aktiviert den threaded Build. Erkannt wird `libomp` über die Datei
+   `$(brew --prefix libomp)/lib/libomp.dylib` — `brew --prefix` allein taugt nicht als
+   Nachweis, weil es auch für nicht installierte Formeln einen Pfad druckt und 0 zurückgibt.
 6. GNU-spezifische Shell-Aufrufe wie `find -printf`, `find -maxdepth` und `stat -c`
    werden durch portable Varianten ersetzt.
-7. Die GitHub-Actions-Konfiguration erhält native Jobs für `macos-15` und
-   `macos-15-intel`, jeweils mit Make- und CMake-Tests.
+7. Alle Build-Targets — auch `debug`, `asan` und `ubsan` — setzen `-ffp-contract=off`.
+   Auf aarch64 gehört FMA zur Basis-ISA, deshalb würde Clang die skalare Reduktion sonst
+   verschmelzen und das Ergebnis wiche von der Referenz ab.
+8. Die GitHub-Actions-Konfiguration erhält native Jobs für `macos-26`, `macos-15` und
+   `macos-26-intel`, jeweils mit Make- und CMake-Tests.
 
 ## Paket prüfen
 
@@ -118,3 +127,12 @@ Darwin-Codepfade, ARM64-Intrinsics sowie Make/CMake-Auswahl geprüft, aber kein 
 93-Layer-Lauf auf echter Apple-Hardware gemessen. Der angewendete Port ergänzt native
 GitHub-Actions-Jobs, die genau diesen Build- und Testschritt auf ARM64- und Intel-macOS
 übernehmen.
+
+Was **tatsächlich ausgeführt** wurde: der Port wird auf einen echten Klon des angehefteten
+Commits angewendet, und der portierte Baum baut auf Linux/x86-64 warnungsfrei und besteht
+die vollständige gewichtslose Testsuite (`make test` und `ctest`, letzteres mit
+`-DK3_ENABLE_OPENMP=OFF` wie in der macOS-CI). Damit ist belegt, dass der Port die
+Referenzplattform nicht beschädigt — mehr lässt sich ohne Apple-Hardware nicht behaupten.
+Die Darwin-spezifischen Zweige selbst wurden nie ausgeführt, nur übersetzt und gelesen.
+Was dieser Prüfstand abdeckt und was nicht, steht Punkt für Punkt in
+[VALIDATION.md](VALIDATION.md).

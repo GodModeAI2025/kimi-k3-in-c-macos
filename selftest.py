@@ -77,8 +77,21 @@ def main() -> int:
         assert "find -printf" not in download and "stat -c" not in download
         pack = (root / "scripts/pack-trunk.sh").read_text(encoding="utf-8")
         assert 'find "$MODEL" -maxdepth' not in pack
-        assert "macos-15-intel" in (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        ci = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        # macos-26 is the newest generally-available image and the closest proxy for the
+        # macOS 27 target; the Intel line ends at macOS 26, so it is pinned there.
+        assert "macos-26" in ci and "macos-26-intel" in ci
         assert (root / "docs/MACOS.md").is_file()
+
+        makefile = (root / "Makefile").read_text(encoding="utf-8")
+        # A non-empty `brew --prefix libomp` does NOT mean libomp is installed, so the
+        # detection has to probe for the dylib itself or the link step fails.
+        assert "libomp.dylib" in makefile, "Homebrew detection must probe for the dylib"
+        # aarch64 has FMA in its baseline ISA, so clearing ARCH does not disable
+        # contraction the way it does on x86-64. Every target needs the flag explicitly.
+        for target in ("asan", "ubsan"):
+            body = makefile.split(f"\n{target}:", 1)[1].split("\n\n", 1)[0]
+            assert "-ffp-contract=off" in body, f"{target} target must pin FP contraction"
 
     print("selftest: all context replacements and idempotency checks passed")
     return 0
