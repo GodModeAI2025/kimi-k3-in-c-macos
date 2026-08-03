@@ -141,6 +141,32 @@ Zusätzlich lokal gemessen statt vermutet:
   `_POSIX_C_SOURCE` deklarierte. Der Test übersetzte damit ein anderes `struct rusage` als
   die echte Datei — genau deshalb blieb der harte Build-Fehler unentdeckt.
 
+## Dritte und vierte Runde: Bedienbarkeit und Prüfschärfe
+
+- `./scripts/download-model.sh` und `./scripts/pack-trunk.sh` standen so in der Anleitung,
+  waren aber als `100644` eingecheckt — also *Permission denied*. Alle drei Skripte werden
+  jetzt ausführbar gemacht; der erzeugte Patch enthält die drei Modusänderungen.
+- Der `strict-warnings`-Job läuft auf Ubuntu und sah damit ausschließlich den
+  `#else`-Zweig jedes `#if defined(__APPLE__)`. Der Darwin-Code war der einzige Teil des
+  Baums ohne `-Werror`. Ein macOS-Job übersetzt ihn jetzt mit `-Werror`.
+- Kein macOS-Job baute je mit OpenMP. Zwei neue Schritte fahren den Standard-`make`
+  einmal ohne und einmal mit installiertem `libomp` und prüfen per `otool -L`, dass
+  `bin/k3` im ersten Fall **kein** `libomp` linkt — das ist der Regressionstest für den
+  kritischsten Befund dieser Prüfung, und er läuft auf echter Apple-Hardware.
+- `scripts/k3-doctor.sh` ist die einzige Datei, die vollständig ersetzt wird. Sie wurde
+  über zwei Teilzeichenketten „erkannt“, womit lokale Änderungen kommentarlos verworfen
+  worden wären — genau die Zusicherung, die das Paket bewirbt, an der einzigen Stelle
+  gebrochen, an der sie zählt. Jetzt per SHA-256 auf den geprüften Inhalt festgenagelt,
+  mit Negativtest.
+- Der erzeugte Doctor legte eine mehrere GB große Probedatei im Modellverzeichnis an,
+  ohne `trap`. Ein Strg-C ließ sie liegen. Jetzt mit Aufräum-Trap.
+- `tests/ci-shell-smoke.py` prüft alle sieben `run:`-Blöcke des Workflows mit `bash -n`
+  unter `set -e`. Workflow-Shell ist die Shell, die niemand lokal ausführt.
+- Zwei Assertions prüften Schreibweise statt Verhalten: `"k3_read_span" in src` ist jetzt
+  durch einen Scan aller `pread`-Aufrufe hinterlegt, und die Feature-Test-Ebene von
+  `darwin-platform-smoke.c` muss mit der jeder portierten Darwin-Datei übereinstimmen —
+  genau diese Lücke ließ den `ru_maxrss`-Baufehler eine grüne Suite passieren.
+
 ## Nicht in dieser Umgebung ausführbar
 
 Diese Grenze ist hart und wird hier nicht beschönigt:
