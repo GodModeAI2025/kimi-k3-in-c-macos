@@ -8,22 +8,74 @@ base. The script is idempotent for a tree that has already been patched.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import os
 import stat
 import sys
 from pathlib import Path
 
 BASE_COMMIT = "85ab2cd901aa81b70caac7711f06864d594b8ff3"
 
+# scripts/k3-doctor.sh as it stands at BASE_COMMIT. It is the only file this port rewrites
+# in full, so it is checked by content rather than by context.
+DOCTOR_BASE_SHA256 = "66b130874f1a275f75e4a3a6b2682a16d202a8733ca4863f4914c00757dde8ae"
+
 
 class PortError(RuntimeError):
     pass
+
+
+# Every edit is staged in memory and flushed only after ALL of them have matched. A
+# transformer that writes as it goes turns one changed upstream line into a half-patched
+# checkout: the earlier files are rewritten, the failing one is left partly converted, and
+# re-running cannot recover because its own context no longer matches. The documented
+# "port an existing checkout" workflow runs straight into that, so writes are deferred.
+_STAGE: "dict[Path, tuple[str, bool]]" = {}
+
+
+def _stage_read(path: Path) -> str:
+    if path in _STAGE:
+        return _STAGE[path][0]
+    return path.read_text(encoding="utf-8")
+
+
+def _stage_write(path: Path, content: str, executable: bool = False) -> None:
+    _STAGE[path] = (content, executable or (path in _STAGE and _STAGE[path][1]))
+
+
+def make_executable(root: Path, relative: str) -> str:
+    """Mark a file executable without changing its contents.
+
+    Upstream tracks everything under scripts/ as mode 100644, and the docs this port adds
+    tell macOS users to run `./scripts/download-model.sh`, which is a Permission denied
+    rather than a run. Only k3-doctor.sh got the bit, because it is the one file the port
+    rewrites wholesale."""
+    path = root / relative
+    if not path.is_file():
+        raise PortError(f"missing expected file: {relative}")
+    already = os.access(path, os.X_OK) and path not in _STAGE
+    _stage_write(path, _stage_read(path), executable=True)
+    return "already patched" if already else "changed"
+
+
+def _stage_exists(path: Path) -> bool:
+    return path in _STAGE or path.exists()
+
+
+def _commit(root: Path) -> None:
+    for path, (content, executable) in _STAGE.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        if executable:
+            path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    _STAGE.clear()
 
 
 def replace_once(root: Path, relative: str, old: str, new: str) -> str:
     path = root / relative
     if not path.is_file():
         raise PortError(f"missing expected file: {relative}")
-    text = path.read_text(encoding="utf-8")
+    text = _stage_read(path)
     # Check the complete replacement first: some replacements deliberately retain the
     # original Linux branch inside a new platform guard.
     if new in text:
@@ -32,7 +84,7 @@ def replace_once(root: Path, relative: str, old: str, new: str) -> str:
         count = text.count(old)
         if count != 1:
             raise PortError(f"expected one match in {relative}, found {count}")
-        path.write_text(text.replace(old, new, 1), encoding="utf-8")
+        _stage_write(path, text.replace(old, new, 1))
         return "changed"
     raise PortError(
         f"upstream context changed in {relative}; refusing an unsafe fuzzy replacement"
@@ -41,19 +93,14 @@ def replace_once(root: Path, relative: str, old: str, new: str) -> str:
 
 def write_file(root: Path, relative: str, content: str, executable: bool = False) -> str:
     path = root / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        current = path.read_text(encoding="utf-8")
-        if current == content:
+    if _stage_exists(path):
+        if _stage_read(path) == content:
             result = "already patched"
         else:
             raise PortError(f"{relative} already exists with different content")
     else:
-        path.write_text(content, encoding="utf-8")
         result = "created"
-    if executable:
-        mode = path.stat().st_mode
-        path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    _stage_write(path, content, executable)
     return result
 
 
@@ -99,8 +146,13 @@ ifeq ($(UNAME_S),Darwin)
   else
     ARCH ?=
   endif
-  BREW_OMP := $(shell command -v brew >/dev/null 2>&1 && brew --prefix libomp 2>/dev/null)
-  ifneq ($(BREW_OMP),)
+  # `brew --prefix libomp` PRINTS A PATH AND EXITS 0 even when libomp is not installed,
+  # so a non-empty answer proves nothing. Probe for the dylib itself: without this the
+  # default build on the very common "Homebrew present, libomp absent" Mac would append
+  # -lomp for a library that is not there and fail at link after compiling everything.
+  BREW_OMP  := $(shell command -v brew >/dev/null 2>&1 && brew --prefix libomp 2>/dev/null || true)
+  BREW_LIBOMP := $(if $(BREW_OMP),$(wildcard $(BREW_OMP)/lib/libomp.dylib),)
+  ifneq ($(BREW_LIBOMP),)
     OMP_CFLAGS ?= -Xpreprocessor -fopenmp -I$(BREW_OMP)/include
     OMP_LDFLAGS ?= -L$(BREW_OMP)/lib -Wl,-rpath,$(BREW_OMP)/lib -lomp
   else
@@ -161,8 +213,9 @@ macos:
 macos-openmp:
 	@test "$(UNAME_S)" = "Darwin" || { echo "macos-openmp target requires Darwin"; exit 1; }
 	@command -v brew >/dev/null 2>&1 || { echo "Homebrew is required; install it first"; exit 1; }
-	@OMP="$$(brew --prefix libomp 2>/dev/null)"; \
-	 test -n "$$OMP" || { echo "libomp is missing; run: brew install libomp"; exit 1; }; \
+	@OMP="$$(brew --prefix libomp 2>/dev/null || true)"; \
+	 test -n "$$OMP" && test -r "$$OMP/lib/libomp.dylib" \
+	   || { echo "libomp is missing; run: brew install libomp"; exit 1; }; \
 	 $(MAKE) \
 	   OMP_CFLAGS="-Xpreprocessor -fopenmp -I$$OMP/include" \
 	   OMP_LDFLAGS="-L$$OMP/lib -Wl,-rpath,$$OMP/lib -lomp" all
@@ -173,6 +226,31 @@ debug:
 	        LDFLAGS="-lm $(OMP_LDFLAGS)" all
 '''
     changed.append(("Makefile macOS targets", replace_once(root, "Makefile", old, new)))
+
+    # The sanitizer targets drop -ffp-contract=off and neutralise ARCH. On x86-64 that was
+    # harmless: clearing ARCH also clears -mavx2, so __AVX2__ goes undefined and the scalar
+    # path compiles. arm64 has no such escape -- __aarch64__ is defined by the target, not
+    # by a flag, so the NEON path is ALWAYS compiled. Without -ffp-contract=off clang fuses
+    # `vaddq_f64(v, vmulq_f64(a,b))` into FMLA (verified: 2 fmla in the generated assembly),
+    # which breaks the bit-exact reduction contract k3_ops.c documents and makes the op
+    # tests fail against their reference on a perfectly correct tree.
+    old = r'''asan:
+	$(MAKE) CFLAGS="-O1 -g -std=gnu99 $(WARN) -fsanitize=address,undefined -fno-omit-frame-pointer" \
+	        LDFLAGS="-lm -fsanitize=address,undefined" ARCH= all
+
+ubsan:
+	$(MAKE) CFLAGS="-O1 -g -std=gnu99 $(WARN) -fsanitize=undefined" \
+	        LDFLAGS="-lm -fsanitize=undefined" ARCH= all
+'''
+    new = r'''asan:
+	$(MAKE) CFLAGS="-O1 -g -std=gnu99 $(WARN) -fsanitize=address,undefined -fno-omit-frame-pointer -ffp-contract=off" \
+	        LDFLAGS="-lm -fsanitize=address,undefined" ARCH= all
+
+ubsan:
+	$(MAKE) CFLAGS="-O1 -g -std=gnu99 $(WARN) -fsanitize=undefined -ffp-contract=off" \
+	        LDFLAGS="-lm -fsanitize=undefined" ARCH= all
+'''
+    changed.append(("sanitizer FP contraction", replace_once(root, "Makefile", old, new)))
     return changed
 
 
@@ -188,7 +266,30 @@ option(K3_SANITIZE      "Build with ASan + UBSan"                     OFF)
 option(K3_ENABLE_OPENMP "Use OpenMP when the toolchain provides it"   ON)
 
 if(K3_ENABLE_OPENMP)
+  # Homebrew's libomp is keg-only: it is never symlinked into the Homebrew lib/include
+  # prefix, so AppleClang's FindOpenMP looks in the default paths, finds nothing, and
+  # configures a silently single-threaded build even on a Mac where `make` would produce
+  # a threaded one. Point CMake at the keg before asking.
+  if(APPLE)
+    execute_process(COMMAND brew --prefix libomp
+                    OUTPUT_VARIABLE K3_LIBOMP_PREFIX
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+    # `brew --prefix <formula>` reports a path for uninstalled formulae too, so require
+    # the dylib itself rather than trusting the answer.
+    if(K3_LIBOMP_PREFIX AND EXISTS "${K3_LIBOMP_PREFIX}/lib/libomp.dylib")
+      set(OpenMP_ROOT "${K3_LIBOMP_PREFIX}")
+      list(APPEND CMAKE_PREFIX_PATH "${K3_LIBOMP_PREFIX}")
+      set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp -I${K3_LIBOMP_PREFIX}/include")
+      set(OpenMP_C_LIB_NAMES omp)
+      set(OpenMP_omp_LIBRARY "${K3_LIBOMP_PREFIX}/lib/libomp.dylib")
+      message(STATUS "Using Homebrew libomp at ${K3_LIBOMP_PREFIX}")
+    endif()
+  endif()
   find_package(OpenMP)
+  if(APPLE AND NOT OpenMP_C_FOUND)
+    message(STATUS "OpenMP not found; building single-threaded (brew install libomp)")
+  endif()
 endif()
 '''
     changed.append(("CMake options", replace_once(root, "CMakeLists.txt", old, new)))
@@ -206,14 +307,29 @@ set(K3_IS_X86_64 FALSE)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
   set(K3_IS_X86_64 TRUE)
 endif()
-# A universal macOS build contains both arm64 and x86_64, so global AVX flags are invalid.
-if(APPLE AND CMAKE_OSX_ARCHITECTURES MATCHES ";")
-  set(K3_IS_X86_64 FALSE)
+# On Apple, CMAKE_SYSTEM_PROCESSOR is the HOST architecture, so it is the wrong answer
+# whenever CMAKE_OSX_ARCHITECTURES asks for something else. Let the requested target win:
+# a universal build (arm64;x86_64) can take no global ISA flag at all, and a single-arch
+# cross build -- `-DCMAKE_OSX_ARCHITECTURES=arm64` on an Intel Mac, which is how an
+# Apple Silicon binary gets produced there -- must not be handed -mavx2 -mfma.
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+  if(CMAKE_OSX_ARCHITECTURES MATCHES ";")
+    set(K3_IS_X86_64 FALSE)
+  elseif(CMAKE_OSX_ARCHITECTURES MATCHES "^(x86_64)$")
+    set(K3_IS_X86_64 TRUE)
+  else()
+    set(K3_IS_X86_64 FALSE)
+  endif()
 endif()
 
 if(K3_NATIVE_ARCH)
   if(K3_IS_X86_64 OR NOT APPLE)
     target_compile_options(k3_flags INTERFACE -march=native)
+  else()
+    # Apple Clang on arm64 rejects -march=native, and every Apple Silicon core already
+    # implements the same baseline the NEON paths target, so there is nothing to add.
+    # Say so: an option that silently does nothing is worse than one that is absent.
+    message(STATUS "K3_NATIVE_ARCH has no effect on Apple Silicon; no extra flags added")
   endif()
 elseif(K3_IS_X86_64)
   # Documented x86-64 distribution baseline.
@@ -417,9 +533,32 @@ static int k3_open_cache_bypassed(const char *path)
 #endif
 }
 
+/* Largest byte count handed to a single pread.
+ *
+ * Linux clamps a read to 0x7ffff000 and RETURNS that count, so a loop over a 2.35 GB
+ * tensor simply goes round twice. Darwin does not: XNU's read_internal rejects any
+ * request above INT_MAX outright with EINVAL, and the loops here treat a negative
+ * return as a fatal short read. embed_tokens and lm_head are 2.35 GB each as bf16, so
+ * on macOS the very first pread of the model would fail. Clamping costs one extra
+ * iteration on the two largest tensors and nothing anywhere else. */
+#define K3_READ_CHUNK ((size_t)1 << 30)
+
+static size_t k3_read_span(int64_t remaining)
+{
+    return (size_t)(remaining > (int64_t)K3_READ_CHUNK ? (int64_t)K3_READ_CHUNK : remaining);
+}
+
 /* ------------------------------------------------------------------ helpers */
 '''
     changed.append(("safetensors cache-bypass helper", replace_once(root, "src/io/k3_st.c", old, new)))
+
+    old = r'''        ssize_t r = pread(s->fd[t->shard], (char *)buf + got,
+                          (size_t)(t->nbytes - got), (off_t)(t->off + got));
+'''
+    new = r'''        ssize_t r = pread(s->fd[t->shard], (char *)buf + got,
+                          k3_read_span(t->nbytes - got), (off_t)(t->off + got));
+'''
+    changed.append(("safetensors oversized read", replace_once(root, "src/io/k3_st.c", old, new)))
 
     old = r'''    /* A second descriptor on the same file, for streamed expert reads that must not go
      * through the page cache. Optional: if the filesystem refuses O_DIRECT the reader
@@ -464,6 +603,15 @@ def patch_trunk(root: Path) -> list[tuple[str, str]]:
 /* WHERE THE TIME IN A BIND ACTUALLY GOES.
 '''
     new = r'''static int k3_alloc_direct(void **out, size_t bytes);   /* defined below */
+
+/* See k3_st.c: Darwin's read path rejects any request above INT_MAX with EINVAL rather
+ * than returning a short count. Trunk layer 0 is 2.34 GB, so it needs the same clamp. */
+#define K3_READ_CHUNK ((size_t)1 << 30)
+
+static size_t k3_read_span(int64_t remaining)
+{
+    return (size_t)(remaining > (int64_t)K3_READ_CHUNK ? (int64_t)K3_READ_CHUNK : remaining);
+}
 
 /* Open the packed trunk with the strongest cache-bypass policy the platform offers.
  * tr->direct means "cache bypass active", not specifically the Linux O_DIRECT flag. */
@@ -551,10 +699,16 @@ static const char *k3_stream_mode_name(int direct)
     old = r'''    const int huge = !getenv("K3_NOHUGE");
     const size_t align = huge ? (2u << 20) : 4096u;
 '''
-    new = r'''#if defined(MADV_HUGEPAGE)
-    const int huge = !getenv("K3_NOHUGE");
-#else
+    # Key this on the PLATFORM, not on whether MADV_HUGEPAGE happens to be visible.
+    # Visibility depends on the feature-test macros of the translation unit, so a
+    # `#if defined(MADV_HUGEPAGE)` test silently disables the 2 MB arena on Linux too in
+    # any file that does not set _GNU_SOURCE -- which is a behaviour change on the
+    # reference platform, not a macOS fallback. The madvise call site keeps its own
+    # visibility guard, which is upstream's and is the correct test for that line.
+    new = r'''#if defined(__APPLE__)
     const int huge = 0;                /* Darwin has no Linux transparent hugepage hint */
+#else
+    const int huge = !getenv("K3_NOHUGE");
 #endif
     const size_t align = huge ? (2u << 20) : 4096u;
 '''
@@ -578,6 +732,14 @@ static const char *k3_stream_mode_name(int direct)
 #endif
 '''
     changed.append(("trunk prefetch advisory", replace_once(root, "src/io/k3_trunk.c", old, new)))
+
+    old = r'''        ssize_t r = pread(tr->fd, dst + got, (size_t)(lay->nbytes - got),
+                          (off_t)(lay->file_off + got));
+'''
+    new = r'''        ssize_t r = pread(tr->fd, dst + got, k3_read_span(lay->nbytes - got),
+                          (off_t)(lay->file_off + got));
+'''
+    changed.append(("trunk oversized read", replace_once(root, "src/io/k3_trunk.c", old, new)))
     return changed
 
 
@@ -585,10 +747,14 @@ def patch_cache(root: Path) -> list[tuple[str, str]]:
     old = r'''        const int huge = !getenv("K3_NOHUGE");
         const size_t al = huge ? (2u << 20) : 4096u;
 '''
-    new = r'''#if defined(MADV_HUGEPAGE)
-        const int huge = !getenv("K3_NOHUGE");
+    # As in k3_trunk.c: test the platform, not the macro's visibility. This file compiles
+    # under _POSIX_C_SOURCE alone, and glibc hides MADV_HUGEPAGE behind __USE_MISC, so a
+    # `#if defined(MADV_HUGEPAGE)` test is FALSE on Linux here and would quietly drop the
+    # expert arena from 2 MB to 4 KB alignment on the reference platform.
+    new = r'''#if defined(__APPLE__)
+        const int huge = 0;            /* Darwin has no transparent-hugepage hint */
 #else
-        const int huge = 0;            /* macOS has no MADV_HUGEPAGE */
+        const int huge = !getenv("K3_NOHUGE");
 #endif
         const size_t al = huge ? (2u << 20) : 4096u;
 '''
@@ -597,6 +763,27 @@ def patch_cache(root: Path) -> list[tuple[str, str]]:
 
 def patch_cli(root: Path) -> list[tuple[str, str]]:
     changed: list[tuple[str, str]] = []
+    # Darwin's <sys/sys/cdefs.h> sets __DARWIN_C_LEVEL to _POSIX_C_SOURCE whenever that is
+    # defined and _DARWIN_C_SOURCE is not. <sys/resource.h> then declares
+    #     #if __DARWIN_C_LEVEL < __DARWIN_C_FULL
+    #             long ru_opaque[14];
+    # instead of the named members, so `ru.ru_maxrss` does not compile at all -- the whole
+    # point of the Darwin branch below. _DARWIN_C_SOURCE is a superset of POSIX 2008 here,
+    # so nothing else in this file loses a declaration.
+    old = r'''#define _POSIX_C_SOURCE 200809L
+
+#include <math.h>
+'''
+    new = r'''#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE       /* struct rusage exposes ru_maxrss only at the full level */
+#else
+#define _POSIX_C_SOURCE 200809L
+#endif
+
+#include <math.h>
+'''
+    changed.append(("CLI Darwin feature level", replace_once(root, "src/cli/k3_run.c", old, new)))
+
     old = r'''#include <time.h>
 #include <sys/resource.h>
 
@@ -658,9 +845,19 @@ static double peak_rss_bytes(void)
 }
 
 /* Reclaimable memory rather than just completely free pages. Linux exposes this as
- * MemAvailable. Darwin exposes page classes, so use free, inactive and speculative
- * pages. Purgeable pages are not added separately because they can overlap other VM
- * classes. Returns 0 if it cannot be measured. */
+ * MemAvailable. Darwin exposes page classes, so use free plus inactive.
+ *
+ * speculative_count is deliberately NOT added: XNU's vm_stats() fills the struct as
+ *     stat->free_count = vm_page_free_count + speculative_count;
+ *     stat->speculative_count = speculative_count;
+ * so the speculative pages are ALREADY inside free_count, and adding them again counts
+ * that class twice. (The vm_stat command-line tool subtracts them back out before it
+ * prints "Pages free", which is why the two look independent there and are not here.)
+ *
+ * This stays deliberately conservative. Active file-backed pages are also reclaimable
+ * on Darwin but are not counted, because over-reporting here would wave a machine
+ * through into a 1.56 TB download that it cannot actually serve. Returns 0 if it cannot
+ * be measured. */
 static double mem_available_bytes(void)
 {
 #if defined(__APPLE__)
@@ -673,8 +870,8 @@ static double mem_available_bytes(void)
         mach_port_deallocate(mach_task_self(), host);
         return 0.0;
     }
-    const uint64_t pages = (uint64_t)vm.free_count + (uint64_t)vm.inactive_count +
-                           (uint64_t)vm.speculative_count;
+    /* natural_t is 32-bit; widen before summing. */
+    const uint64_t pages = (uint64_t)vm.free_count + (uint64_t)vm.inactive_count;
     mach_port_deallocate(mach_task_self(), host);
     return (double)pages * (double)page_size;
 #else
@@ -724,30 +921,54 @@ info() { printf '  %sinfo  %s%s\n' "$DIM" "$*" "$RST"; }
 
 FAILED=0
 HAVE_BREW_OMP=0
+
+# The storage probe writes a multi-GB file into the user's model directory. Ctrl-C during
+# the two minutes that takes would otherwise strand it there, once per interruption, in
+# the exact directory a 1.56 TB download is about to need.
+K3_PROBE_FILE=""
+k3_cleanup() { [ -n "$K3_PROBE_FILE" ] && rm -f "$K3_PROBE_FILE"; return 0; }
+trap k3_cleanup EXIT HUP INT TERM
 MODEL_DIR="${1:-}"
 
 printf '%s\n' "Kimi K3, environment check ($OS/$ARCH)"
 
 # ------------------------------------------------------------------ toolchain --
 hdr "toolchain"
-if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; then
-    CCBIN=$(command -v cc || command -v gcc)
-    ok "C compiler: $($CCBIN --version 2>&1 | head -1)"
-else
-    if [ "$OS" = Darwin ]; then
-        bad "no C compiler found (run: xcode-select --install)"
-    else
-        bad "no C compiler found (install build-essential or equivalent)"
+# Presence on PATH is not evidence on macOS. /usr/bin/cc, /usr/bin/gcc, /usr/bin/make and
+# /usr/bin/git are xcrun shims that exist on a stock system whether or not the Command
+# Line Tools are installed; without them the shim prints "no developer tools were found"
+# and exits non-zero. Testing with `command -v` therefore always succeeds and the
+# xcode-select advice below could never print. Run the tool instead.
+CCBIN=""
+for candidate in cc gcc clang; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" --version >/dev/null 2>&1; then
+        CCBIN=$(command -v "$candidate")
+        break
     fi
+done
+if [ -n "$CCBIN" ]; then
+    ok "C compiler: $($CCBIN --version 2>&1 | head -1)"
+elif [ "$OS" = Darwin ]; then
+    bad "no working C compiler (run: xcode-select --install)"
+else
+    bad "no C compiler found (install build-essential or equivalent)"
 fi
-command -v make >/dev/null 2>&1 && ok "make: $(make --version 2>&1 | head -1)" || bad "make not found"
+if make --version >/dev/null 2>&1; then
+    ok "make: $(make --version 2>&1 | head -1)"
+elif [ "$OS" = Darwin ]; then
+    bad "make is not usable (run: xcode-select --install)"
+else
+    bad "make not found"
+fi
 if command -v python3 >/dev/null 2>&1; then
     ok "python3: $(python3 --version 2>&1)"
 else
     warn "python3 not found; download, trunk packing and analysis tools need it"
 fi
 if [ "$OS" = Darwin ]; then
-    if command -v brew >/dev/null 2>&1 && brew --prefix libomp >/dev/null 2>&1; then
+    # `brew --prefix libomp` succeeds for an UNINSTALLED formula too, so test the dylib.
+    OMP_PREFIX=$(command -v brew >/dev/null 2>&1 && brew --prefix libomp 2>/dev/null || true)
+    if [ -n "$OMP_PREFIX" ] && [ -r "$OMP_PREFIX/lib/libomp.dylib" ]; then
         HAVE_BREW_OMP=1
         ok "OpenMP: Homebrew libomp detected (default make will use it)"
     else
@@ -791,8 +1012,12 @@ if [ "$OS" = Darwin ]; then
     MEM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
     VMSTAT=$(vm_stat 2>/dev/null || true)
     PAGE_SIZE=$(printf '%s\n' "$VMSTAT" | awk '/page size of/ {gsub(/[^0-9]/,"",$8); print $8; exit}')
+    # Free plus inactive only, matching the engine's own mem_available_bytes(). Speculative
+    # pages are deliberately left out: in the raw Mach struct they are already inside
+    # free_count, and counting a class twice here would wave a machine through into a
+    # 1.56 TB download it cannot serve. Understating is the safe direction for this gate.
     AVAIL_PAGES=$(printf '%s\n' "$VMSTAT" | awk -F: '
-        /Pages free|Pages inactive|Pages speculative/ {
+        /^Pages free|^Pages inactive/ {
             gsub(/[^0-9]/,"",$2); s += $2
         }
         END {printf "%.0f", s+0}')
@@ -814,19 +1039,51 @@ else
     AVAIL_GB=$MEM_GB
 fi
 
-# Preset boundaries follow the project's measured memory ladder. macOS reclaimable
-# memory is an estimate from free + inactive + speculative VM pages.
-if   [ "$AVAIL_GB" -ge 192 ]; then PRESET=server;      EXPECT="published Linux figure ~19-21 s/token"
-elif [ "$AVAIL_GB" -ge  96 ]; then PRESET=workstation; EXPECT="published Linux figure ~24 s/token"
-elif [ "$AVAIL_GB" -ge  32 ]; then PRESET=desktop;     EXPECT="published Linux figure ~28-31 s/token"
-elif [ "$AVAIL_GB" -ge  10 ]; then PRESET=laptop;      EXPECT="published Linux figure ~32 s/token"
+# Preset boundaries follow the project's measured memory ladder.
+#
+# The number the boundaries are applied to differs by platform, on purpose. Linux
+# MemAvailable is a kernel ESTIMATE that already accounts for reclaimable page cache, so
+# it is directly comparable to the ladder. The Darwin figure is free + inactive VM pages,
+# which deliberately omits reclaimable file-backed pages sitting in the active queue --
+# a real and often large pool. It therefore understates, and understating must not turn
+# into a refusal: a 64 GiB Mac in the middle of a working day can easily show under
+# 10 GiB free+inactive and still run this perfectly well once macOS evicts its caches.
+# So on Darwin the hard floor is checked against INSTALLED memory, and the instantaneous
+# figure only chooses the preset and triggers a "close some apps" warning.
+if [ "$OS" = Darwin ]; then
+    FLOOR_GB=$MEM_GB
+else
+    FLOOR_GB=$AVAIL_GB
+fi
+PRESET_GB=$AVAIL_GB
+[ "$PRESET_GB" -gt "$MEM_GB" ] 2>/dev/null && PRESET_GB=$MEM_GB
+
+if   [ "$PRESET_GB" -ge 192 ]; then PRESET=server;      EXPECT="published Linux figure ~19-21 s/token"
+elif [ "$PRESET_GB" -ge  96 ]; then PRESET=workstation; EXPECT="published Linux figure ~24 s/token"
+elif [ "$PRESET_GB" -ge  32 ]; then PRESET=desktop;     EXPECT="published Linux figure ~28-31 s/token"
+elif [ "$PRESET_GB" -ge  10 ]; then PRESET=laptop;      EXPECT="published Linux figure ~32 s/token"
 else PRESET=""; EXPECT=""; fi
 
-if [ -n "$PRESET" ]; then
+if [ "$FLOOR_GB" -lt 10 ] 2>/dev/null; then
+    if [ "$OS" = Darwin ]; then
+        bad "${MEM_GB} GiB installed, below the engine's measured floor (~8.2 GB peak RSS)"
+    else
+        bad "under 10 GiB available, below the engine's measured floor (~8.2 GB peak RSS)"
+    fi
+elif [ -n "$PRESET" ]; then
     ok "recommended memory preset: --preset $PRESET"
-    [ "$OS" = Linux ] && info "$EXPECT" || info "macOS speed must be measured on this Mac"
+    if [ "$OS" = Linux ]; then
+        info "$EXPECT"
+    else
+        info "macOS speed must be measured on this Mac"
+        info "free+inactive omits reclaimable cached files, so this is a lower bound"
+    fi
 else
-    bad "under 10 GiB reclaimable, below the engine's measured floor (~8.2 GB peak RSS)"
+    # Installed memory clears the floor, the instantaneous figure does not.
+    PRESET=laptop
+    warn "only ${AVAIL_GB} GiB free right now on a ${MEM_GB} GiB Mac; close applications"
+    info "starting anyway is usually fine: macOS evicts cached files under pressure"
+    ok "recommended memory preset: --preset $PRESET"
 fi
 
 # -------------------------------------------------------------------- storage --
@@ -844,6 +1101,7 @@ if [ -d "$TARGET" ]; then
     if [ "$PROBE_MB" -gt 0 ]; then
         printf '  %smeasuring sequential read (%s MB temporary file)…%s\n' "$DIM" "$PROBE_MB" "$RST"
         TMPF="$TARGET/.k3_doctor_probe.$$"
+        K3_PROBE_FILE="$TMPF"
         if dd if=/dev/zero of="$TMPF" bs=1048576 count="$PROBE_MB" 2>/dev/null; then
             sync
             TIMING=$({ /usr/bin/time -p sh -c 'dd if="$1" of=/dev/null bs=4194304 2>/dev/null' sh "$TMPF"; } 2>&1)
@@ -851,7 +1109,15 @@ if [ -d "$TARGET" ]; then
             rm -f "$TMPF"
             if [ -n "${SECONDS_REAL:-}" ] && awk -v s="$SECONDS_REAL" 'BEGIN {exit !(s>0)}'; then
                 RATE=$(awk -v mb="$PROBE_MB" -v s="$SECONDS_REAL" 'BEGIN {printf "%.0f MB/s", mb/s}')
-                ok "sequential read probe: $RATE"
+                # Say what this number is. The file was written moments ago and is still
+                # in the buffer cache, and nothing here can evict it without privileges
+                # (BSD dd has no conv=fsync, and `purge` needs sudo). So the figure is an
+                # UPPER BOUND that may be measuring RAM, and reporting it as the disk's
+                # sequential rate would be the sort of confident wrong number that sends
+                # someone into a 1.56 TB download on a slow external drive.
+                ok "sequential read probe: $RATE (upper bound)"
+                info "the file is still cached, so this can measure RAM rather than the disk"
+                info "for a real figure use a probe larger than RAM, or the vendor spec"
                 info "the engine streams roughly 135 GB per token at the smallest budgets"
             else
                 warn "read probe completed, but its duration could not be parsed"
@@ -915,17 +1181,25 @@ def patch_doctor(root: Path) -> list[tuple[str, str]]:
     path = root / "scripts/k3-doctor.sh"
     if not path.is_file():
         raise PortError("missing expected file: scripts/k3-doctor.sh")
-    text = path.read_text(encoding="utf-8")
+    text = _stage_read(path)
     marker = "k3-doctor, check whether this Linux or macOS machine can run Kimi K3"
     if marker in text:
         result = "already patched"
     else:
-        if "LINUX ONLY" not in text or "k3-doctor: this script and the streaming engine are Linux-only" not in text:
-            raise PortError("upstream context changed in scripts/k3-doctor.sh")
-        path.write_text(DOCTOR, encoding="utf-8")
+        # This is the one file replaced WHOLESALE rather than by context-exact edits, so
+        # it is also the one place where "every replacement must match exactly or we
+        # abort" could quietly become untrue: a two-substring sniff test would accept a
+        # checkout carrying unrelated local changes and then discard them without a word.
+        # Pin the exact reviewed content instead.
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if digest != DOCTOR_BASE_SHA256:
+            raise PortError(
+                "scripts/k3-doctor.sh differs from the reviewed upstream file "
+                f"(sha256 {digest}); this port replaces it wholesale and would discard "
+                "those changes, so it refuses instead"
+            )
         result = "changed"
-    mode = path.stat().st_mode
-    path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    _stage_write(path, DOCTOR if result == "changed" else text, executable=True)
     return [("cross-platform machine doctor", result)]
 
 
@@ -956,6 +1230,8 @@ read -r N B <<< "$TOTALS"
         fi
 '''
     changed.append(("portable per-shard sizes", replace_once(root, "scripts/download-model.sh", old, new)))
+    changed.append(("download script executable",
+                    make_executable(root, "scripts/download-model.sh")))
     return changed
 
 
@@ -974,7 +1250,10 @@ for shard in "$MODEL"/*.safetensors; do
 done
 [ "$N" -gt 0 ] || { echo "no .safetensors in $MODEL, run download-model.sh first"; exit 1; }
 '''
-    return [("portable trunk shard count", replace_once(root, "scripts/pack-trunk.sh", old, new))]
+    return [
+        ("portable trunk shard count", replace_once(root, "scripts/pack-trunk.sh", old, new)),
+        ("pack script executable", make_executable(root, "scripts/pack-trunk.sh")),
+    ]
 
 
 MACOS_DOC = r'''# Running kimi-k3-in-c on macOS
@@ -982,6 +1261,10 @@ MACOS_DOC = r'''# Running kimi-k3-in-c on macOS
 This port supports native builds on both Apple Silicon (`arm64`) and Intel (`x86_64`). It
 keeps the Linux behavior intact while mapping the operating-system-specific pieces to
 Darwin equivalents.
+
+Apple Silicon is the forward-looking target. macOS 26 (Tahoe) was announced as the last
+release supporting Intel Macs, so on macOS 27 and later only the `arm64` path is
+reachable. The `x86_64` path is retained for Intel Macs still on macOS 26 or earlier.
 
 ## Build
 
@@ -1007,6 +1290,8 @@ make test
 ```
 
 A normal `make` also detects Homebrew `libomp` automatically when it is already installed.
+Detection probes for `$(brew --prefix libomp)/lib/libomp.dylib` rather than trusting the
+exit status of `brew --prefix`, which reports a path for uninstalled formulae too.
 CMake is supported as well:
 
 ```bash
@@ -1030,6 +1315,26 @@ ctest --test-dir build --output-on-failure
 * OpenMP is optional on macOS and can be supplied by Homebrew `libomp`.
 * Model download and trunk scripts no longer depend on GNU-only `find -maxdepth`,
   `find -printf` or `stat -c`.
+
+## What is still Linux-only
+
+`benchmarks/memory-ladder.sh` and `benchmarks/split-sweep.sh` remain Linux-only, and
+deliberately so. Both impose a real memory ceiling with `systemd-run` cgroup scopes, and
+macOS has no equivalent: without a ceiling every rung would use as much memory as it
+likes, so the harness would print a complete table that measures nothing. Both scripts
+check for `systemd-run` and exit with that explanation rather than producing a misleading
+result, so running them on a Mac fails immediately instead of quietly.
+
+Everything under `scripts/` — the doctor, the model download and the trunk packer — does
+run on macOS. One caveat on `download-model.sh`: it installs `huggingface_hub` with
+`python3 -m pip install` when the module is missing, and Homebrew's Python marks itself
+externally managed (PEP 668), so that step fails there under `set -euo pipefail`. Install
+the dependency yourself first, in a virtualenv or with `pipx`:
+
+```bash
+python3 -m venv ~/.venvs/k3 && source ~/.venvs/k3/bin/activate
+pip install "huggingface_hub[cli]"
+```
 
 ## Full model
 
@@ -1067,6 +1372,16 @@ OpenMP. It must not be reused as an Apple Silicon prediction. This port establis
 correct native arm64 build, two hand-written NEON dot-product paths and macOS I/O
 behavior. It deliberately does not claim full-model Apple Silicon performance that has
 not been measured against the 1.56 TB checkpoint on actual Apple hardware.
+
+## Numerical reproducibility
+
+Every build target passes `-ffp-contract=off`, including `debug`, `asan` and `ubsan`.
+This is not optional on Apple Silicon. The reduction loops are written as
+`s0 += w[i] * x[i]` in a deliberate four-accumulator split, and aarch64 has fused
+multiply-add in its baseline ISA, so clang will fuse those statements unless told not to
+and the result stops matching the reference the op tests compare against. On x86-64 the
+same targets get away with it only because clearing `ARCH` also drops `-mfma`, leaving
+the compiler no FMA instruction to emit; aarch64 has no such accident to rely on.
 '''
 
 
@@ -1111,24 +1426,53 @@ and automatically uses Homebrew `libomp` when installed. CMake works too:
 '''
     changed.append(("README build dependencies", replace_once(root, "README.md", old, new)))
 
+    # The FAQ is the one place a reader goes to ask exactly this question, and it still
+    # answered "Linux" after the rest of the README had been updated around it.
+    old = r'''**macOS, Windows, WSL?** The engine targets Linux. The tokenizer and config reader are
+portable C99 and are built portably in CI.
+'''
+    new = r'''**macOS, Windows, WSL?** The engine targets Linux and macOS. macOS builds natively on
+Apple Silicon and Intel with stock Apple Clang, using NEON dot products on arm64 and
+F_NOCACHE where Linux uses O_DIRECT; see [`docs/MACOS.md`](docs/MACOS.md). Windows is
+still unsupported. The tokenizer and config reader are portable C99 and are built
+portably in CI.
+'''
+    changed.append(("README platform FAQ", replace_once(root, "README.md", old, new)))
+
     changed.append(("macOS guide", write_file(root, "docs/MACOS.md", MACOS_DOC)))
     return changed
 
 
 def patch_ci(root: Path) -> list[tuple[str, str]]:
+    changed: list[tuple[str, str]] = []
+    # Same reason as the Makefile's asan/ubsan targets: this recipe clears ARCH, which on
+    # x86-64 also removes -mfma and leaves no FMA instruction to emit, but on an arm64
+    # runner FMA is baseline and the scalar reduction fuses. Pin the flag so the recipe
+    # stays correct if this job ever moves to a macOS runner, and so docs/MACOS.md's
+    # "every build target" claim is actually true of the shipped tree.
+    old = r'''          make CFLAGS="-O1 -g -std=gnu99 -Wall -Wextra -fsanitize=address,undefined -fno-omit-frame-pointer" \
+'''
+    new = r'''          make CFLAGS="-O1 -g -std=gnu99 -Wall -Wextra -fsanitize=address,undefined -fno-omit-frame-pointer -ffp-contract=off" \
+'''
+    changed.append(("CI sanitizer FP contraction",
+                    replace_once(root, ".github/workflows/ci.yml", old, new)))
+
     old = r'''  # Warnings are defects here. The engine does arithmetic on `const void *` weight
   # pointers, where a missing -Wpointer-arith silently strides by one byte.
   strict-warnings:
 '''
-    new = r'''  # Native Darwin coverage on both architectures. The standard macos-15 label is
-  # Apple Silicon; macos-15-intel keeps the final supported x86-64 macOS line covered.
+    new = r'''  # Native Darwin coverage. macos-26 is the newest generally-available image and is the
+  # closest proxy for the macOS 27 target; macos-15 keeps the previous major honest.
+  # Both are Apple Silicon. macos-26-intel covers the x86-64 line, which ends with
+  # macOS 26 -- Apple announced Tahoe as the last Intel-capable release, so no Intel
+  # runner will ever exercise macOS 27. Add a macos-27 entry once that image is GA.
   macos-build-and-test:
     name: build + test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, macos-15-intel]
+        os: [macos-26, macos-15, macos-26-intel]
     steps:
       - uses: actions/checkout@v7
       - name: Toolchain
@@ -1136,6 +1480,16 @@ def patch_ci(root: Path) -> list[tuple[str, str]]:
           sw_vers
           uname -m
           cc --version
+      # The project's "warnings are defects" job runs on ubuntu, so it only ever sees the
+      # #else half of every `#if defined(__APPLE__)` this port adds. Without this step the
+      # Darwin-only code is the one part of the tree exempt from that rule.
+      - name: Darwin code with warnings as errors
+        run: |
+          make clean
+          make OMP_CFLAGS= OMP_LDFLAGS= \
+            CFLAGS="-O2 -std=gnu99 -Wall -Wextra -Wpointer-arith -Wshadow -Wvla -Wno-unused-parameter -Werror -ffp-contract=off" \
+            LDFLAGS="-lm" -j"$(sysctl -n hw.logicalcpu)"
+          make clean
       - name: Build with stock Apple Clang
         run: make macos -j"$(sysctl -n hw.logicalcpu)"
       - name: Build weightless tests
@@ -1157,14 +1511,48 @@ def patch_ci(root: Path) -> list[tuple[str, str]]:
           cmake --build build-cmake -j"$(sysctl -n hw.logicalcpu)"
           ctest --test-dir build-cmake --output-on-failure
 
+      # Everything above neutralises OpenMP, which leaves the path a macOS user actually
+      # takes -- a plain `make` on a machine that has Homebrew -- completely unexercised.
+      # `brew --prefix libomp` answers with a path whether or not the formula is
+      # installed, so this runs the default build BOTH ways: once with only the prefix
+      # resolvable, which must NOT produce a -lomp link, and once for real.
+      - name: Default make without libomp installed
+        run: |
+          if brew list libomp >/dev/null 2>&1; then
+            brew uninstall --ignore-dependencies libomp
+          fi
+          # Informational, not an assertion: if Homebrew ever stops answering for an
+          # uninstalled formula the trap is gone, and that is worth seeing in the log
+          # without turning it into a red build.
+          echo "brew --prefix libomp still answers: $(brew --prefix libomp 2>&1 || true)"
+          make clean
+          make -j"$(sysctl -n hw.logicalcpu)"
+          if otool -L bin/k3 | grep -q libomp; then
+            echo "bin/k3 links libomp although it is not installed"; exit 1
+          fi
+          echo "stock Apple Clang build did not pick up a phantom libomp"
+      - name: Default make with libomp installed
+        run: |
+          brew install libomp
+          make clean
+          make -j"$(sysctl -n hw.logicalcpu)"
+          if ! otool -L bin/k3 | grep -q libomp; then
+            echo "libomp is installed but the default build did not link it"; exit 1
+          fi
+          make OMP_CFLAGS="-Xpreprocessor -fopenmp -I$(brew --prefix libomp)/include" \
+               OMP_LDFLAGS="-L$(brew --prefix libomp)/lib -Wl,-rpath,$(brew --prefix libomp)/lib -lomp" \
+               test -j"$(sysctl -n hw.logicalcpu)"
+
   # Warnings are defects here. The engine does arithmetic on `const void *` weight
   # pointers, where a missing -Wpointer-arith silently strides by one byte.
   strict-warnings:
 '''
-    return [("macOS CI matrix", replace_once(root, ".github/workflows/ci.yml", old, new))]
+    changed.append(("macOS CI matrix", replace_once(root, ".github/workflows/ci.yml", old, new)))
+    return changed
 
 
 def apply(root: Path) -> list[tuple[str, str]]:
+    _STAGE.clear()          # never inherit a previous (possibly failed) run's staged edits
     required = ["Makefile", "CMakeLists.txt", "README.md", "src/core/k3_ops.c"]
     for relative in required:
         if not (root / relative).exists():
@@ -1186,6 +1574,8 @@ def apply(root: Path) -> list[tuple[str, str]]:
         patch_ci,
     ):
         changes.extend(operation(root))
+    # Nothing has touched the working tree yet: every replacement matched, so flush.
+    _commit(root)
     return changes
 
 

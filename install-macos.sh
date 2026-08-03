@@ -10,6 +10,7 @@ DEST="kimi-k3-in-c-macos"
 OPENMP_MODE=auto
 RUN_TESTS=1
 RUN_BUILD=1
+SEEN_DEST=0
 
 usage() {
     cat <<'EOF'
@@ -38,15 +39,18 @@ while [ "$#" -gt 0 ]; do
         -h|--help) usage; exit 0 ;;
         --) shift; break ;;
         -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
-        *) DEST=$1 ;;
+        # The loop consumes positionals too, so count them here. Checking $# after the
+        # loop can never see a second one -- it is always 0 unless `--` broke out early.
+        *) DEST=$1; SEEN_DEST=$((SEEN_DEST + 1)) ;;
     esac
     shift
 done
-if [ "$#" -gt 0 ]; then
+while [ "$#" -gt 0 ]; do
     DEST=$1
+    SEEN_DEST=$((SEEN_DEST + 1))
     shift
-fi
-if [ "$#" -gt 0 ]; then
+done
+if [ "$SEEN_DEST" -gt 1 ]; then
     echo "only one destination may be supplied" >&2
     exit 2
 fi
@@ -57,20 +61,33 @@ if [ "$(uname -s)" != Darwin ]; then
     exit 1
 fi
 
+# On macOS git, make and cc exist in /usr/bin as xcrun shims even with no Command Line
+# Tools installed; they only fail when invoked. `command -v` would pass here on a fresh
+# Mac and the run would then die inside git with an unrelated-looking error, so check
+# that the developer tools are actually present and that each tool really runs.
+if ! xcode-select -p >/dev/null 2>&1; then
+    echo "Xcode Command Line Tools are not installed; run: xcode-select --install" >&2
+    exit 1
+fi
 for tool in git python3 make cc; do
-    command -v "$tool" >/dev/null 2>&1 || {
+    command -v "$tool" >/dev/null 2>&1 && "$tool" --version >/dev/null 2>&1 || {
         if [ "$tool" = cc ]; then
-            echo "missing C compiler; run: xcode-select --install" >&2
+            echo "C compiler present but not usable; run: xcode-select --install" >&2
         else
-            echo "missing required tool: $tool" >&2
+            echo "missing or unusable required tool: $tool" >&2
         fi
         exit 1
     }
 done
 
+# `brew --prefix libomp` prints a path and exits 0 even when libomp is NOT installed, so
+# a non-empty prefix is not evidence. Require the dylib, or the build fails at link.
 OMP_PREFIX=""
 if [ "$OPENMP_MODE" != off ] && command -v brew >/dev/null 2>&1; then
-    OMP_PREFIX=$(brew --prefix libomp 2>/dev/null || true)
+    _omp_candidate=$(brew --prefix libomp 2>/dev/null || true)
+    if [ -n "$_omp_candidate" ] && [ -r "$_omp_candidate/lib/libomp.dylib" ]; then
+        OMP_PREFIX=$_omp_candidate
+    fi
 fi
 if [ "$OPENMP_MODE" = required ] && [ -z "$OMP_PREFIX" ]; then
     echo "--with-openmp requires Homebrew libomp; run: brew install libomp" >&2

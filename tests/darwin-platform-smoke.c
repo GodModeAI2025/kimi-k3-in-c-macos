@@ -1,4 +1,19 @@
-/* Compile-only smoke test for Darwin-specific source fragments used by the port. */
+/* Compile-only smoke test for Darwin-specific source fragments used by the port.
+ *
+ * WHAT THIS DOES NOT PROVE. There is no macOS SDK on the machine that runs the package
+ * validation, so the Mach types and constants below are LOCAL STAND-INS, not Apple's.
+ * The real vm_statistics64_data_t has around twenty natural_t (32-bit) counters and a
+ * real HOST_VM_INFO64_COUNT near 38, not the three-field uint64_t struct declared here.
+ * So this file checks that the code SHAPE compiles -- the fcntl calls, the getrusage
+ * unit handling, the argument types and the in/out `count` protocol -- and nothing about
+ * Apple's headers. Only the macOS CI jobs compile against the real SDK.
+ *
+ * The engine widens each counter to uint64_t before summing precisely because the real
+ * fields are 32-bit; keep that cast if this stand-in is ever updated. */
+/* This prologue must stay identical to the one the ported sources use. It did not once:
+ * the test declared _DARWIN_C_SOURCE while src/cli/k3_run.c still declared only
+ * _POSIX_C_SOURCE, so the test compiled a struct rusage that had ru_maxrss while the
+ * real file compiled one that did not. A green suite hid a hard macOS build failure. */
 #define _DARWIN_C_SOURCE 1
 #include <fcntl.h>
 #include <stdint.h>
