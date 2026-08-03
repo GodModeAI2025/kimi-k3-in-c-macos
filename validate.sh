@@ -44,4 +44,22 @@ else
     echo "validate: clang absent; skipped optional arm64 NEON cross-compile"
 fi
 
+# A manifest is worthless if nothing notices it going stale, and it went stale twice
+# during review. Verify it here so an out-of-date SHA256SUMS fails the suite.
+if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$HERE" && sha256sum -c SHA256SUMS --quiet) || {
+        echo "validate: SHA256SUMS does not match the shipped files; regenerate it" >&2
+        exit 1
+    }
+    echo "validate: SHA256SUMS matches every listed file"
+elif command -v shasum >/dev/null 2>&1; then     # macOS ships shasum, not sha256sum
+    (cd "$HERE" && shasum -a 256 -c SHA256SUMS >/dev/null) || {
+        echo "validate: SHA256SUMS does not match the shipped files; regenerate it" >&2
+        exit 1
+    }
+    echo "validate: SHA256SUMS matches every listed file"
+else
+    echo "validate: no sha256 tool; skipped manifest check"
+fi
+
 echo "validate: package checks passed"

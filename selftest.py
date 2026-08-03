@@ -25,8 +25,14 @@ def main() -> int:
         pairs[relative].append(("", content))
         return "captured"
 
+    def capture_chmod(_root: Path, relative: str) -> str:
+        pairs.setdefault(relative, [])
+        return "captured"
+
     real_replace, real_write = port.replace_once, port.write_file
+    real_chmod = port.make_executable
     port.replace_once, port.write_file = capture, capture_file
+    port.make_executable = capture_chmod
     try:
         dummy = Path("/")
         for fn in (
@@ -45,6 +51,7 @@ def main() -> int:
             fn(dummy)
     finally:
         port.replace_once, port.write_file = real_replace, real_write
+        port.make_executable = real_chmod
 
     with tempfile.TemporaryDirectory(prefix="k3-macos-port-test-") as tmp:
         root = Path(tmp)

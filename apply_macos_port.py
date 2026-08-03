@@ -8,6 +8,7 @@ base. The script is idempotent for a tree that has already been patched.
 from __future__ import annotations
 
 import argparse
+import os
 import stat
 import sys
 from pathlib import Path
@@ -35,6 +36,21 @@ def _stage_read(path: Path) -> str:
 
 def _stage_write(path: Path, content: str, executable: bool = False) -> None:
     _STAGE[path] = (content, executable or (path in _STAGE and _STAGE[path][1]))
+
+
+def make_executable(root: Path, relative: str) -> str:
+    """Mark a file executable without changing its contents.
+
+    Upstream tracks everything under scripts/ as mode 100644, and the docs this port adds
+    tell macOS users to run `./scripts/download-model.sh`, which is a Permission denied
+    rather than a run. Only k3-doctor.sh got the bit, because it is the one file the port
+    rewrites wholesale."""
+    path = root / relative
+    if not path.is_file():
+        raise PortError(f"missing expected file: {relative}")
+    already = os.access(path, os.X_OK) and path not in _STAGE
+    _stage_write(path, _stage_read(path), executable=True)
+    return "already patched" if already else "changed"
 
 
 def _stage_exists(path: Path) -> bool:
@@ -245,7 +261,30 @@ option(K3_SANITIZE      "Build with ASan + UBSan"                     OFF)
 option(K3_ENABLE_OPENMP "Use OpenMP when the toolchain provides it"   ON)
 
 if(K3_ENABLE_OPENMP)
+  # Homebrew's libomp is keg-only: it is never symlinked into the Homebrew lib/include
+  # prefix, so AppleClang's FindOpenMP looks in the default paths, finds nothing, and
+  # configures a silently single-threaded build even on a Mac where `make` would produce
+  # a threaded one. Point CMake at the keg before asking.
+  if(APPLE)
+    execute_process(COMMAND brew --prefix libomp
+                    OUTPUT_VARIABLE K3_LIBOMP_PREFIX
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+    # `brew --prefix <formula>` reports a path for uninstalled formulae too, so require
+    # the dylib itself rather than trusting the answer.
+    if(K3_LIBOMP_PREFIX AND EXISTS "${K3_LIBOMP_PREFIX}/lib/libomp.dylib")
+      set(OpenMP_ROOT "${K3_LIBOMP_PREFIX}")
+      list(APPEND CMAKE_PREFIX_PATH "${K3_LIBOMP_PREFIX}")
+      set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp -I${K3_LIBOMP_PREFIX}/include")
+      set(OpenMP_C_LIB_NAMES omp)
+      set(OpenMP_omp_LIBRARY "${K3_LIBOMP_PREFIX}/lib/libomp.dylib")
+      message(STATUS "Using Homebrew libomp at ${K3_LIBOMP_PREFIX}")
+    endif()
+  endif()
   find_package(OpenMP)
+  if(APPLE AND NOT OpenMP_C_FOUND)
+    message(STATUS "OpenMP not found; building single-threaded (brew install libomp)")
+  endif()
 endif()
 '''
     changed.append(("CMake options", replace_once(root, "CMakeLists.txt", old, new)))
@@ -263,14 +302,29 @@ set(K3_IS_X86_64 FALSE)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
   set(K3_IS_X86_64 TRUE)
 endif()
-# A universal macOS build contains both arm64 and x86_64, so global AVX flags are invalid.
-if(APPLE AND CMAKE_OSX_ARCHITECTURES MATCHES ";")
-  set(K3_IS_X86_64 FALSE)
+# On Apple, CMAKE_SYSTEM_PROCESSOR is the HOST architecture, so it is the wrong answer
+# whenever CMAKE_OSX_ARCHITECTURES asks for something else. Let the requested target win:
+# a universal build (arm64;x86_64) can take no global ISA flag at all, and a single-arch
+# cross build -- `-DCMAKE_OSX_ARCHITECTURES=arm64` on an Intel Mac, which is how an
+# Apple Silicon binary gets produced there -- must not be handed -mavx2 -mfma.
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+  if(CMAKE_OSX_ARCHITECTURES MATCHES ";")
+    set(K3_IS_X86_64 FALSE)
+  elseif(CMAKE_OSX_ARCHITECTURES MATCHES "^(x86_64)$")
+    set(K3_IS_X86_64 TRUE)
+  else()
+    set(K3_IS_X86_64 FALSE)
+  endif()
 endif()
 
 if(K3_NATIVE_ARCH)
   if(K3_IS_X86_64 OR NOT APPLE)
     target_compile_options(k3_flags INTERFACE -march=native)
+  else()
+    # Apple Clang on arm64 rejects -march=native, and every Apple Silicon core already
+    # implements the same baseline the NEON paths target, so there is nothing to add.
+    # Say so: an option that silently does nothing is worse than one that is absent.
+    message(STATUS "K3_NATIVE_ARCH has no effect on Apple Silicon; no extra flags added")
   endif()
 elseif(K3_IS_X86_64)
   # Documented x86-64 distribution baseline.
@@ -1153,6 +1207,8 @@ read -r N B <<< "$TOTALS"
         fi
 '''
     changed.append(("portable per-shard sizes", replace_once(root, "scripts/download-model.sh", old, new)))
+    changed.append(("download script executable",
+                    make_executable(root, "scripts/download-model.sh")))
     return changed
 
 
@@ -1171,7 +1227,10 @@ for shard in "$MODEL"/*.safetensors; do
 done
 [ "$N" -gt 0 ] || { echo "no .safetensors in $MODEL, run download-model.sh first"; exit 1; }
 '''
-    return [("portable trunk shard count", replace_once(root, "scripts/pack-trunk.sh", old, new))]
+    return [
+        ("portable trunk shard count", replace_once(root, "scripts/pack-trunk.sh", old, new)),
+        ("pack script executable", make_executable(root, "scripts/pack-trunk.sh")),
+    ]
 
 
 MACOS_DOC = r'''# Running kimi-k3-in-c on macOS
@@ -1244,7 +1303,15 @@ check for `systemd-run` and exit with that explanation rather than producing a m
 result, so running them on a Mac fails immediately instead of quietly.
 
 Everything under `scripts/` — the doctor, the model download and the trunk packer — does
-run on macOS.
+run on macOS. One caveat on `download-model.sh`: it installs `huggingface_hub` with
+`python3 -m pip install` when the module is missing, and Homebrew's Python marks itself
+externally managed (PEP 668), so that step fails there under `set -euo pipefail`. Install
+the dependency yourself first, in a virtualenv or with `pipx`:
+
+```bash
+python3 -m venv ~/.venvs/k3 && source ~/.venvs/k3/bin/activate
+pip install "huggingface_hub[cli]"
+```
 
 ## Full model
 
@@ -1336,11 +1403,37 @@ and automatically uses Homebrew `libomp` when installed. CMake works too:
 '''
     changed.append(("README build dependencies", replace_once(root, "README.md", old, new)))
 
+    # The FAQ is the one place a reader goes to ask exactly this question, and it still
+    # answered "Linux" after the rest of the README had been updated around it.
+    old = r'''**macOS, Windows, WSL?** The engine targets Linux. The tokenizer and config reader are
+portable C99 and are built portably in CI.
+'''
+    new = r'''**macOS, Windows, WSL?** The engine targets Linux and macOS. macOS builds natively on
+Apple Silicon and Intel with stock Apple Clang, using NEON dot products on arm64 and
+F_NOCACHE where Linux uses O_DIRECT; see [`docs/MACOS.md`](docs/MACOS.md). Windows is
+still unsupported. The tokenizer and config reader are portable C99 and are built
+portably in CI.
+'''
+    changed.append(("README platform FAQ", replace_once(root, "README.md", old, new)))
+
     changed.append(("macOS guide", write_file(root, "docs/MACOS.md", MACOS_DOC)))
     return changed
 
 
 def patch_ci(root: Path) -> list[tuple[str, str]]:
+    changed: list[tuple[str, str]] = []
+    # Same reason as the Makefile's asan/ubsan targets: this recipe clears ARCH, which on
+    # x86-64 also removes -mfma and leaves no FMA instruction to emit, but on an arm64
+    # runner FMA is baseline and the scalar reduction fuses. Pin the flag so the recipe
+    # stays correct if this job ever moves to a macOS runner, and so docs/MACOS.md's
+    # "every build target" claim is actually true of the shipped tree.
+    old = r'''          make CFLAGS="-O1 -g -std=gnu99 -Wall -Wextra -fsanitize=address,undefined -fno-omit-frame-pointer" \
+'''
+    new = r'''          make CFLAGS="-O1 -g -std=gnu99 -Wall -Wextra -fsanitize=address,undefined -fno-omit-frame-pointer -ffp-contract=off" \
+'''
+    changed.append(("CI sanitizer FP contraction",
+                    replace_once(root, ".github/workflows/ci.yml", old, new)))
+
     old = r'''  # Warnings are defects here. The engine does arithmetic on `const void *` weight
   # pointers, where a missing -Wpointer-arith silently strides by one byte.
   strict-warnings:
@@ -1364,6 +1457,16 @@ def patch_ci(root: Path) -> list[tuple[str, str]]:
           sw_vers
           uname -m
           cc --version
+      # The project's "warnings are defects" job runs on ubuntu, so it only ever sees the
+      # #else half of every `#if defined(__APPLE__)` this port adds. Without this step the
+      # Darwin-only code is the one part of the tree exempt from that rule.
+      - name: Darwin code with warnings as errors
+        run: |
+          make clean
+          make OMP_CFLAGS= OMP_LDFLAGS= \
+            CFLAGS="-O2 -std=gnu99 -Wall -Wextra -Wpointer-arith -Wshadow -Wvla -Wno-unused-parameter -Werror -ffp-contract=off" \
+            LDFLAGS="-lm" -j"$(sysctl -n hw.logicalcpu)"
+          make clean
       - name: Build with stock Apple Clang
         run: make macos -j"$(sysctl -n hw.logicalcpu)"
       - name: Build weightless tests
@@ -1385,11 +1488,35 @@ def patch_ci(root: Path) -> list[tuple[str, str]]:
           cmake --build build-cmake -j"$(sysctl -n hw.logicalcpu)"
           ctest --test-dir build-cmake --output-on-failure
 
+      # Everything above neutralises OpenMP, which leaves the path a macOS user actually
+      # takes -- a plain `make` on a machine that has Homebrew -- completely unexercised.
+      # `brew --prefix libomp` answers with a path whether or not the formula is
+      # installed, so this runs the default build BOTH ways: once with only the prefix
+      # resolvable, which must NOT produce a -lomp link, and once for real.
+      - name: Default make without libomp installed
+        run: |
+          brew list libomp >/dev/null 2>&1 && brew uninstall --ignore-dependencies libomp || true
+          test -n "$(brew --prefix libomp)" # the prefix still resolves; that is the trap
+          make clean
+          make -j"$(sysctl -n hw.logicalcpu)"
+          otool -L bin/k3 | grep -q libomp && { echo "linked libomp that is not installed"; exit 1; }
+          echo "stock Apple Clang build did not pick up a phantom libomp"
+      - name: Default make with libomp installed
+        run: |
+          brew install libomp
+          make clean
+          make -j"$(sysctl -n hw.logicalcpu)"
+          otool -L bin/k3 | grep -q libomp || { echo "libomp installed but not linked"; exit 1; }
+          make OMP_CFLAGS="-Xpreprocessor -fopenmp -I$(brew --prefix libomp)/include" \
+               OMP_LDFLAGS="-L$(brew --prefix libomp)/lib -Wl,-rpath,$(brew --prefix libomp)/lib -lomp" \
+               test -j"$(sysctl -n hw.logicalcpu)"
+
   # Warnings are defects here. The engine does arithmetic on `const void *` weight
   # pointers, where a missing -Wpointer-arith silently strides by one byte.
   strict-warnings:
 '''
-    return [("macOS CI matrix", replace_once(root, ".github/workflows/ci.yml", old, new))]
+    changed.append(("macOS CI matrix", replace_once(root, ".github/workflows/ci.yml", old, new)))
+    return changed
 
 
 def apply(root: Path) -> list[tuple[str, str]]:
