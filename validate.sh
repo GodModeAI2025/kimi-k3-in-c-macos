@@ -15,6 +15,7 @@ python3 -m py_compile "$HERE/apply_macos_port.py" "$HERE/selftest.py"
 "$HERE/selftest.py"
 "$HERE/tests/build-selection-smoke.py"
 "$HERE/tests/neon-parity.py"
+"$HERE/tests/ci-shell-smoke.py"
 "$HERE/tests/doctor-macos-smoke.sh"
 bash -n "$HERE/install-macos.sh"
 BASE=$(python3 "$HERE/apply_macos_port.py" --print-base-commit)

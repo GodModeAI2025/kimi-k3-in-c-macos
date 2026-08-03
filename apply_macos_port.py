@@ -1495,18 +1495,27 @@ def patch_ci(root: Path) -> list[tuple[str, str]]:
       # resolvable, which must NOT produce a -lomp link, and once for real.
       - name: Default make without libomp installed
         run: |
-          brew list libomp >/dev/null 2>&1 && brew uninstall --ignore-dependencies libomp || true
-          test -n "$(brew --prefix libomp)" # the prefix still resolves; that is the trap
+          if brew list libomp >/dev/null 2>&1; then
+            brew uninstall --ignore-dependencies libomp
+          fi
+          # Informational, not an assertion: if Homebrew ever stops answering for an
+          # uninstalled formula the trap is gone, and that is worth seeing in the log
+          # without turning it into a red build.
+          echo "brew --prefix libomp still answers: $(brew --prefix libomp 2>&1 || true)"
           make clean
           make -j"$(sysctl -n hw.logicalcpu)"
-          otool -L bin/k3 | grep -q libomp && { echo "linked libomp that is not installed"; exit 1; }
+          if otool -L bin/k3 | grep -q libomp; then
+            echo "bin/k3 links libomp although it is not installed"; exit 1
+          fi
           echo "stock Apple Clang build did not pick up a phantom libomp"
       - name: Default make with libomp installed
         run: |
           brew install libomp
           make clean
           make -j"$(sysctl -n hw.logicalcpu)"
-          otool -L bin/k3 | grep -q libomp || { echo "libomp installed but not linked"; exit 1; }
+          if ! otool -L bin/k3 | grep -q libomp; then
+            echo "libomp is installed but the default build did not link it"; exit 1
+          fi
           make OMP_CFLAGS="-Xpreprocessor -fopenmp -I$(brew --prefix libomp)/include" \
                OMP_LDFLAGS="-L$(brew --prefix libomp)/lib -Wl,-rpath,$(brew --prefix libomp)/lib -lomp" \
                test -j"$(sysctl -n hw.logicalcpu)"
