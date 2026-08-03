@@ -1094,6 +1094,18 @@ ctest --test-dir build --output-on-failure
 * Model download and trunk scripts no longer depend on GNU-only `find -maxdepth`,
   `find -printf` or `stat -c`.
 
+## What is still Linux-only
+
+`benchmarks/memory-ladder.sh` and `benchmarks/split-sweep.sh` remain Linux-only, and
+deliberately so. Both impose a real memory ceiling with `systemd-run` cgroup scopes, and
+macOS has no equivalent: without a ceiling every rung would use as much memory as it
+likes, so the harness would print a complete table that measures nothing. Both scripts
+check for `systemd-run` and exit with that explanation rather than producing a misleading
+result, so running them on a Mac fails immediately instead of quietly.
+
+Everything under `scripts/` — the doctor, the model download and the trunk packer — does
+run on macOS.
+
 ## Full model
 
 The operational requirements have not become smaller: the checkpoint is about 1.56 TB and

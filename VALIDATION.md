@@ -37,8 +37,13 @@ stärkste Aussage, die sich ohne Apple-Hardware treffen lässt.
 
 - ARM64-Cross-Compile der verwendeten NEON-Intrinsics mit Clang und
   `--target=aarch64-none-elf`
-- Compile-Smoke-Test für `F_NOCACHE`, `F_RDADVISE`, Darwin-`ru_maxrss` und die verwendeten
-  Mach-VM-Typen/APIs
+- Compile-Smoke-Test für `F_NOCACHE`, `F_RDADVISE`, Darwin-`ru_maxrss` und die Form der
+  Mach-VM-Aufrufe. **Einschränkung:** mangels macOS-SDK deklariert dieser Test die
+  Mach-Typen und -Konstanten selbst. Er prüft die Code-Form (Argumenttypen, das
+  in/out-`count`-Protokoll, die Fehlerpfade), **nicht** Apples echte Header. Das echte
+  `vm_statistics64_data_t` hat rund zwanzig 32-Bit-`natural_t`-Zähler; deshalb weitet der
+  Engine-Code jeden Zähler vor der Summe auf `uint64_t`. Gegen das echte SDK übersetzt
+  ausschließlich die macOS-CI.
 - **`tests/neon-parity.py`** prüft die tatsächlich injizierten Kernel, nicht eine
   Handkopie: es extrahiert die `__aarch64__`-Blöcke aus `apply_macos_port.py`, vergleicht
   ihre vollständige Intrinsic-Reihenfolge mit `tests/neon-smoke.c` und schlägt bei einer

@@ -66,4 +66,61 @@ grep -q 'Kimi K3, environment check (Darwin/arm64)' "$TMP/output"
 grep -q 'NEON: native bf16 and MXFP4 dot-product paths enabled' "$TMP/output"
 grep -q 'recommended memory preset: --preset desktop' "$TMP/output"
 grep -q 'this machine can run the macOS-compatible Kimi K3 engine' "$TMP/output"
+grep -q 'OpenMP not detected' "$TMP/output"
+
+# `brew --prefix libomp` answers with a path and exit 0 even when the formula is NOT
+# installed, so a doctor that trusts it reports OpenMP on almost every Mac with Homebrew
+# and then recommends a `make` that dies at the link step. Both halves are pinned here.
+mkdir -p "$TMP/brew-prefix/lib"
+cat > "$TMP/bin/brew" <<SH
+#!/bin/sh
+[ "\$1" = "--prefix" ] && { echo "$TMP/brew-prefix"; exit 0; }
+exit 1
+SH
+chmod +x "$TMP/bin/brew"
+
+PATH="$TMP/bin:/usr/bin:/bin" K3_DOCTOR_PROBE_MB=0 \
+    "$TMP/doctor.sh" "$TMP/model" > "$TMP/output-nolibomp"
+grep -q 'OpenMP not detected' "$TMP/output-nolibomp" || {
+    echo "doctor smoke: reported libomp present although only the prefix exists" >&2
+    exit 1
+}
+
+: > "$TMP/brew-prefix/lib/libomp.dylib"
+PATH="$TMP/bin:/usr/bin:/bin" K3_DOCTOR_PROBE_MB=0 \
+    "$TMP/doctor.sh" "$TMP/model" > "$TMP/output-libomp"
+grep -q 'Homebrew libomp detected' "$TMP/output-libomp" || {
+    echo "doctor smoke: failed to detect an installed libomp" >&2
+    exit 1
+}
+
+# The storage probe is skipped above (PROBE_MB=0). Run it once for real so the dd,
+# timing and awk rate arithmetic are executed rather than assumed. macOS always ships
+# /usr/bin/time; a Linux CI box may not, and the probe is required to degrade to a
+# warning there rather than abort or print a garbage rate.
+rm -f "$TMP/bin/df"
+PATH="$TMP/bin:/usr/bin:/bin" K3_DOCTOR_PROBE_MB=1 \
+    "$TMP/doctor.sh" "$TMP/model" > "$TMP/output-probe"
+grep -q 'measuring sequential read (1 MB temporary file)' "$TMP/output-probe" || {
+    echo "doctor smoke: the storage probe block never ran" >&2
+    exit 1
+}
+if [ -x /usr/bin/time ]; then
+    grep -qE 'sequential read probe: [0-9]+ MB/s' "$TMP/output-probe" || {
+        echo "doctor smoke: the storage probe produced no parseable rate" >&2
+        sed -n '/storage/,/model/p' "$TMP/output-probe" >&2
+        exit 1
+    }
+else
+    grep -q 'duration could not be parsed' "$TMP/output-probe" || {
+        echo "doctor smoke: probe did not degrade cleanly without /usr/bin/time" >&2
+        exit 1
+    }
+fi
+# The probe file is written into the model directory and must never be left behind.
+if find "$TMP/model" -name '.k3_doctor_probe*' | grep -q .; then
+    echo "doctor smoke: the storage probe left its temporary file behind" >&2
+    exit 1
+fi
+
 echo "doctor smoke: simulated Darwin/arm64 checks passed"
