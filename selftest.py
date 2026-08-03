@@ -2,7 +2,9 @@
 """Self-test the context-checked macOS port applier without network access."""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import re
 import tempfile
 from collections import defaultdict
 from pathlib import Path
@@ -63,11 +65,26 @@ def main() -> int:
                 path.write_text("\n/* selftest separator */\n".join(old_parts), encoding="utf-8")
         doctor = root / "scripts/k3-doctor.sh"
         doctor.parent.mkdir(parents=True, exist_ok=True)
-        doctor.write_text(
-            "#!/usr/bin/env bash\n# LINUX ONLY\n"
-            "echo 'k3-doctor: this script and the streaming engine are Linux-only.'\n",
-            encoding="utf-8",
-        )
+        doctor_stub = ("#!/usr/bin/env bash\n# LINUX ONLY\n"
+                       "echo 'k3-doctor: this script and the streaming engine are Linux-only.'\n")
+        doctor.write_text(doctor_stub, encoding="utf-8")
+        # k3-doctor.sh is the one file replaced wholesale, so the transformer pins its
+        # exact upstream content by hash. This synthetic tree is not that file, so point
+        # the pin at the stub; the real constant is exercised against a real checkout.
+        real_doctor_sha = port.DOCTOR_BASE_SHA256
+        assert re.fullmatch(r"[0-9a-f]{64}", real_doctor_sha), "doctor pin must be a sha256"
+        port.DOCTOR_BASE_SHA256 = hashlib.sha256(doctor_stub.encode("utf-8")).hexdigest()
+
+        # Negative test: a checkout whose doctor differs must be refused, not silently
+        # overwritten -- that guarantee is the reason the pin exists.
+        doctor.write_text(doctor_stub + "# a local change\n", encoding="utf-8")
+        try:
+            port.apply(root)
+        except port.PortError as exc:
+            assert "differs from the reviewed upstream file" in str(exc)
+        else:
+            raise AssertionError("patch_doctor accepted a modified k3-doctor.sh")
+        doctor.write_text(doctor_stub, encoding="utf-8")
 
         first = port.apply(root)
         assert first
@@ -94,6 +111,29 @@ def main() -> int:
         trunk_src = (root / "src/io/k3_trunk.c").read_text(encoding="utf-8")
         for name, src in (("k3_st.c", st_src), ("k3_trunk.c", trunk_src)):
             assert "k3_read_span" in src, f"{name} must clamp oversized preads"
+            # Naming the helper is not the same as using it. Check that no pread in the
+            # whole-tensor / whole-layer loops still passes an unclamped remaining count,
+            # which is the shape that fails with EINVAL on Darwin above INT_MAX.
+            for call in re.findall(r"pread\((?:[^()]|\([^()]*\))*\)", src, re.S):
+                if "nbytes - got" in call and "k3_read_span" not in call:
+                    raise AssertionError(
+                        f"{name}: pread still takes an unclamped size: "
+                        f"{' '.join(call.split())[:90]}"
+                    )
+
+        # The Darwin compile smoke test must use the same feature-test level as every
+        # ported file that contains Darwin code, or it compiles different structs than
+        # the real build does and a hard macOS build break passes the suite.
+        smoke = (HERE / "tests/darwin-platform-smoke.c").read_text(encoding="utf-8")
+        assert "#define _DARWIN_C_SOURCE" in smoke
+        for relative in ("src/cli/k3_run.c", "src/io/k3_st.c", "src/io/k3_trunk.c"):
+            src = (root / relative).read_text(encoding="utf-8")
+            if "__APPLE__" not in src:
+                continue
+            assert "#define _DARWIN_C_SOURCE" in src, (
+                f"{relative} has Darwin code but not the Darwin feature level; "
+                "darwin-platform-smoke.c would then test a different struct layout"
+            )
 
         # The hugepage fallback must key on the PLATFORM. Testing `defined(MADV_HUGEPAGE)`
         # is a visibility test, and glibc hides that macro under _POSIX_C_SOURCE, so it

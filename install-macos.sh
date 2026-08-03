@@ -10,6 +10,7 @@ DEST="kimi-k3-in-c-macos"
 OPENMP_MODE=auto
 RUN_TESTS=1
 RUN_BUILD=1
+SEEN_DEST=0
 
 usage() {
     cat <<'EOF'
@@ -38,15 +39,18 @@ while [ "$#" -gt 0 ]; do
         -h|--help) usage; exit 0 ;;
         --) shift; break ;;
         -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
-        *) DEST=$1 ;;
+        # The loop consumes positionals too, so count them here. Checking $# after the
+        # loop can never see a second one -- it is always 0 unless `--` broke out early.
+        *) DEST=$1; SEEN_DEST=$((SEEN_DEST + 1)) ;;
     esac
     shift
 done
-if [ "$#" -gt 0 ]; then
+while [ "$#" -gt 0 ]; do
     DEST=$1
+    SEEN_DEST=$((SEEN_DEST + 1))
     shift
-fi
-if [ "$#" -gt 0 ]; then
+done
+if [ "$SEEN_DEST" -gt 1 ]; then
     echo "only one destination may be supplied" >&2
     exit 2
 fi

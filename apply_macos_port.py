@@ -8,12 +8,17 @@ base. The script is idempotent for a tree that has already been patched.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import stat
 import sys
 from pathlib import Path
 
 BASE_COMMIT = "85ab2cd901aa81b70caac7711f06864d594b8ff3"
+
+# scripts/k3-doctor.sh as it stands at BASE_COMMIT. It is the only file this port rewrites
+# in full, so it is checked by content rather than by context.
+DOCTOR_BASE_SHA256 = "66b130874f1a275f75e4a3a6b2682a16d202a8733ca4863f4914c00757dde8ae"
 
 
 class PortError(RuntimeError):
@@ -916,6 +921,13 @@ info() { printf '  %sinfo  %s%s\n' "$DIM" "$*" "$RST"; }
 
 FAILED=0
 HAVE_BREW_OMP=0
+
+# The storage probe writes a multi-GB file into the user's model directory. Ctrl-C during
+# the two minutes that takes would otherwise strand it there, once per interruption, in
+# the exact directory a 1.56 TB download is about to need.
+K3_PROBE_FILE=""
+k3_cleanup() { [ -n "$K3_PROBE_FILE" ] && rm -f "$K3_PROBE_FILE"; return 0; }
+trap k3_cleanup EXIT HUP INT TERM
 MODEL_DIR="${1:-}"
 
 printf '%s\n' "Kimi K3, environment check ($OS/$ARCH)"
@@ -1089,6 +1101,7 @@ if [ -d "$TARGET" ]; then
     if [ "$PROBE_MB" -gt 0 ]; then
         printf '  %smeasuring sequential read (%s MB temporary file)…%s\n' "$DIM" "$PROBE_MB" "$RST"
         TMPF="$TARGET/.k3_doctor_probe.$$"
+        K3_PROBE_FILE="$TMPF"
         if dd if=/dev/zero of="$TMPF" bs=1048576 count="$PROBE_MB" 2>/dev/null; then
             sync
             TIMING=$({ /usr/bin/time -p sh -c 'dd if="$1" of=/dev/null bs=4194304 2>/dev/null' sh "$TMPF"; } 2>&1)
@@ -1173,8 +1186,18 @@ def patch_doctor(root: Path) -> list[tuple[str, str]]:
     if marker in text:
         result = "already patched"
     else:
-        if "LINUX ONLY" not in text or "k3-doctor: this script and the streaming engine are Linux-only" not in text:
-            raise PortError("upstream context changed in scripts/k3-doctor.sh")
+        # This is the one file replaced WHOLESALE rather than by context-exact edits, so
+        # it is also the one place where "every replacement must match exactly or we
+        # abort" could quietly become untrue: a two-substring sniff test would accept a
+        # checkout carrying unrelated local changes and then discard them without a word.
+        # Pin the exact reviewed content instead.
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if digest != DOCTOR_BASE_SHA256:
+            raise PortError(
+                "scripts/k3-doctor.sh differs from the reviewed upstream file "
+                f"(sha256 {digest}); this port replaces it wholesale and would discard "
+                "those changes, so it refuses instead"
+            )
         result = "changed"
     _stage_write(path, DOCTOR if result == "changed" else text, executable=True)
     return [("cross-platform machine doctor", result)]

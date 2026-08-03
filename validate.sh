@@ -52,13 +52,19 @@ if command -v sha256sum >/dev/null 2>&1; then
         echo "validate: SHA256SUMS does not match the shipped files; regenerate it" >&2
         exit 1
     }
-    echo "validate: SHA256SUMS matches every listed file"
+    # Self-consistency, NOT authenticity: the manifest and this checker ship in the same
+    # tree, so anyone who edits a file can regenerate both. It catches a stale manifest,
+    # which is what it is for; it proves nothing about provenance.
+    echo "validate: SHA256SUMS is self-consistent (staleness check, not authenticity)"
 elif command -v shasum >/dev/null 2>&1; then     # macOS ships shasum, not sha256sum
     (cd "$HERE" && shasum -a 256 -c SHA256SUMS >/dev/null) || {
         echo "validate: SHA256SUMS does not match the shipped files; regenerate it" >&2
         exit 1
     }
-    echo "validate: SHA256SUMS matches every listed file"
+    # Self-consistency, NOT authenticity: the manifest and this checker ship in the same
+    # tree, so anyone who edits a file can regenerate both. It catches a stale manifest,
+    # which is what it is for; it proves nothing about provenance.
+    echo "validate: SHA256SUMS is self-consistent (staleness check, not authenticity)"
 else
     echo "validate: no sha256 tool; skipped manifest check"
 fi
