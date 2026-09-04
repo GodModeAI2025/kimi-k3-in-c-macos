@@ -6,7 +6,9 @@ libomp im Makefile. Die vollständige Messung, Zeile für Zeile, steht in
 [UPSTREAM.md](../UPSTREAM.md).
 
 **Stand: nichts davon ist eingereicht.** Es gibt keinen Fork, keinen Branch beim
-Upstream und keinen Pull Request. `einreichen.sh` ist bisher nur mit `--probe` gelaufen.
+Upstream und keinen Pull Request. Gegen den echten Upstream ist `einreichen.sh` nur mit
+`--probe` gelaufen; der Veröffentlichungspfad ist ausschließlich gegen Attrappen von
+`git` und `gh` geprüft worden, die jeden Aufruf protokollieren und nichts weitergeben.
 
 | Datei | Inhalt |
 | --- | --- |
@@ -82,6 +84,15 @@ den Branch und öffnet den Pull Request mit dem Text aus `PR.md`. Vorher fragt e
 nach. `beitrag/einreichen.sh --probe` macht nur die erste Hälfte und veröffentlicht
 nichts; das ist der Lauf, mit dem sich am Tag der Einreichung prüfen lässt, ob der Patch
 noch passt.
+
+Die Optionen werden alle gelesen, an welcher Stelle sie auch stehen. `--probe` schlägt
+`--ja`: wo beide stehen, endet der Lauf nach dem Probelauf. Eine unbekannte Option bricht
+mit Rückgabewert 2 ab, bevor irgendetwas geholt wird. Das war nicht immer so: bis dahin
+wertete das Skript nur sein erstes Argument aus, weshalb `einreichen.sh --ja --probe`
+das `--probe` still verwarf und ohne Rückfrage Fork, Push und Pull Request fuhr. Gemessen
+gegen eine Attrappe von `git` und `gh`, die jeden Aufruf mitschreibt: vorher sieben
+Fremdaufrufe bis `gh pr create`, danach ein einziger `git clone` und die Meldung
+`Probelauf beendet, es wurde nichts veroeffentlicht.`
 
 Beim ersten Lauf richtet das Skript mit `gh auth setup-git` den Credential-Helper von
 `gh` ein, weil ein HTTPS-Push sonst nach einem Passwort fragt, das es nicht mehr gibt.

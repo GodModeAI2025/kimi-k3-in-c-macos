@@ -10,8 +10,14 @@
 # sich weiterbewegt. Der Probelauf sagt an dem Tag, an dem jemand einreichen will, ob er
 # noch sauber anwendbar ist, und zwar mit demselben `git am`, das der Ernstfall benutzt.
 #
-# Dieses Skript ist im Rahmen der Vorbereitung nur mit --probe gelaufen. Es wurde nichts
-# geforkt, nichts gepusht und kein Pull Request angelegt.
+# Die Optionen werden alle gelesen, an welcher Stelle sie auch stehen, und --probe
+# schlaegt --ja: wo beide stehen, endet der Lauf nach dem Probelauf. Eine unbekannte
+# Option bricht ab. Bis dahin wertete das Skript nur das erste Argument aus, weshalb
+# `einreichen.sh --ja --probe` --probe verwarf und ohne Rueckfrage veroeffentlichte.
+#
+# Gegen den echten Upstream ist dieses Skript nur mit --probe gelaufen. Es wurde nichts
+# geforkt, nichts gepusht und kein Pull Request angelegt. Der Veroeffentlichungspfad ist
+# nur gegen Attrappen von git und gh geprueft.
 set -euo pipefail
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -22,13 +28,17 @@ BRANCH="macos/libomp-optional"
 
 PROBE=0
 NACHFRAGEN=1
-case "${1:-}" in
-    --probe) PROBE=1 ;;
-    --ja)    NACHFRAGEN=0 ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    "")      ;;
-    *)       echo "einreichen: unbekannte Option: $1" >&2; exit 2 ;;
-esac
+# Eine Schleife und kein `case "$1"`: eine Option, die nur an erster Stelle gilt, ist
+# keine Option, sondern eine Position. Wer --probe schreibt, meint --probe, egal wo.
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --probe) PROBE=1 ;;
+        --ja)    NACHFRAGEN=0 ;;
+        -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *)       echo "einreichen: unbekannte Option: $1" >&2; exit 2 ;;
+    esac
+    shift
+done
 
 [ -f "$PATCHFILE" ] || { echo "einreichen: $PATCHFILE fehlt" >&2; exit 1; }
 [ -s "$BODY" ]      || { echo "einreichen: $BODY fehlt oder ist leer" >&2; exit 1; }

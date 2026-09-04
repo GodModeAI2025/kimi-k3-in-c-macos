@@ -12,8 +12,8 @@ acb57a7135b2d7d6e665f67f056e21353023b93835f54def1ae523bf76f1bfb3  ./VERSION
 481d2610227c45ba0420c4aa6c65c0041b60666b18e679043ce7a2c0cea9b9a0  ./apply_macos_port.py
 056079668f85fac9632ade95fa4443d4a108db06147cb6e0f6d696dc5b213a05  ./beitrag/0001-build-without-openmp-when-libomp-is-absent-on-macos.patch
 03eb9fe7df8b0d7e18e6a98afc16ad76f684525df60e1f6bf0171f84bf7b9da7  ./beitrag/PR.md
-d78d8167f3045ad134cbda814b92eecfcc820efa730cc5a1b8acec71d7201f8c  ./beitrag/README.md
-170ff59046701abd384583300d6a195a6bc0d5a200a6412aa2e89fd373e2f412  ./beitrag/einreichen.sh
+3d6c4f1a54755796752405077db8afff102a350c349c42eb8a5a831b30fb9b5a  ./beitrag/README.md
+be7266c14dc8d4713d9fe6d093da23cb8ecc6d374c151d627b6822a9ba0fd9a9  ./beitrag/einreichen.sh
 88e9761fc03be3676ca9fb2660ab5af4c699b6554e6a9a9a7ae667e9e6d4add0  ./install-macos.sh
 26f5bd45c6ce1cdc7a541e510dc496b7d80388fe46bdfd310e8aa8c0719e16b0  ./make-sha256sums.sh
 363a963e1ba144137c73763d7566f6850dd8699c972a87faab18c1a0ea64d120  ./scripts/check-release-archive.sh
