@@ -129,6 +129,12 @@ excluded() {
     return 1
 }
 
+# Das Ausgabeverzeichnis wird aufgeloest, bevor irgendwo hin gewechselt wird: ein
+# relativer Pfad meint das Verzeichnis, in dem der Aufruf stand, und nicht die Wurzel des
+# Repos, in die das Skript gleich wechselt.
+mkdir -p "$OUTDIR"
+OUTDIR=$(CDPATH= cd -- "$OUTDIR" && pwd)
+
 STAGE=$(mktemp -d "${TMPDIR:-/tmp}/kimi-k3-release.XXXXXX")
 trap 'rm -rf "$STAGE"' EXIT HUP INT TERM
 
@@ -194,9 +200,6 @@ chmod 644 "$MANIFEST"
 
 # Alle Zeitstempel gleich, sonst unterscheiden sich zwei Laeufe im DOS-Zeitfeld.
 find "$STAGE/$PREFIX" -exec env TZ=UTC touch -t "$ARCHIVE_MTIME" -- {} +
-
-mkdir -p "$OUTDIR"
-OUTDIR=$(CDPATH= cd -- "$OUTDIR" && pwd)
 
 # In eine frische Datei schreiben: `zip` auf ein vorhandenes Archiv aktualisiert es und
 # laesst alte Eintraege stehen. Erst danach an den Zielort schieben.
