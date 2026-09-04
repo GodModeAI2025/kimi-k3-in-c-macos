@@ -1,5 +1,7 @@
 # Kimi K3 in C – macOS-Port
 
+[![CI](https://github.com/GodModeAI2025/kimi-k3-in-c-macos/actions/workflows/ci.yml/badge.svg)](https://github.com/GodModeAI2025/kimi-k3-in-c-macos/actions/workflows/ci.yml)
+
 Dieses Paket portiert **FareedKhan-dev/kimi-k3-in-c** auf macOS. Es ist auf den geprüften
 Upstream-Commit `85ab2cd901aa81b70caac7711f06864d594b8ff3` festgelegt und unterstützt:
 
