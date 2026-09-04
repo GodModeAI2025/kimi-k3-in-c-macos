@@ -69,4 +69,22 @@ else
     echo "validate: no sha256 tool; skipped manifest check"
 fi
 
+# Verifying the listed hashes says nothing about the files that are NOT listed, and two
+# of them were missing for a while. Compare the manifest against the versioned files, but
+# only when this really is the checkout root: an unpacked release has no git metadata,
+# and a copy inside an unrelated repository would be measured against that repository.
+if command -v git >/dev/null 2>&1 &&
+   [ "$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)" = "$HERE" ]; then
+    LISTED=$(sed -E 's|^[0-9a-f]+  \./||' "$HERE/SHA256SUMS")
+    TRACKED=$(git -C "$HERE" ls-files | grep -vx SHA256SUMS)
+    if [ "$LISTED" != "$TRACKED" ]; then
+        echo "validate: SHA256SUMS does not list every versioned file; run ./make-sha256sums.sh" >&2
+        diff <(printf '%s\n' "$TRACKED") <(printf '%s\n' "$LISTED") >&2 || true
+        exit 1
+    fi
+    echo "validate: SHA256SUMS lists every versioned file except itself"
+else
+    echo "validate: no checkout root; skipped the SHA256SUMS coverage check"
+fi
+
 echo "validate: package checks passed"

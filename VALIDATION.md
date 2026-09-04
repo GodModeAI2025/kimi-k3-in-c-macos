@@ -89,8 +89,15 @@ doctor smoke: simulated Darwin/arm64 checks passed
 validate: installer and transformer use the same upstream commit
 validate: Darwin API syntax smoke passed
 validate: arm64 NEON compile smoke passed (no fused multiply-add)
+validate: SHA256SUMS is self-consistent (staleness check, not authenticity)
+validate: SHA256SUMS lists every versioned file except itself
 validate: package checks passed
 ```
+
+Das Manifest wird nicht von Hand gepflegt, sondern mit `./make-sha256sums.sh` aus
+`git ls-files` erzeugt. `validate.sh` prüft beide Hälften: die Hashes der gelisteten
+Dateien und ob die Liste alle versionierten Dateien enthält. `SHA256SUMS` selbst steht
+nicht darin, eine Prüfsummendatei enthält ihre eigene Prüfsumme nicht.
 
 ## Zweite Review-Runde: was gegen Apples Quellen geprüft wurde
 
