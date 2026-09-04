@@ -117,13 +117,14 @@ nicht darin, eine Prüfsummendatei enthält ihre eigene Prüfsumme nicht.
   der Upstream-Commit und das Ziel des Badges.
 - `vollpruefung-macos` auf `macos-latest`: `./validate.sh` vollständig, danach eine
   Prüfung, dass die plattformabhängigen Blöcke wirklich gelaufen sind. `validate.sh`
-  überspringt einzelne Blöcke mit einer Meldung und bleibt grün, wenn `clang`, ein
-  SHA-256-Werkzeug oder die Git-Metadaten des Checkouts fehlen. Für den C-Compiler gilt
-  das nicht: `tests/build-selection-smoke.py` läuft vorher und konfiguriert ein kleines
+  überspringt einzelne Blöcke mit einer Meldung und bleibt grün, wenn `cc`, `clang`, ein
+  SHA-256-Werkzeug oder die Git-Metadaten des Checkouts fehlen. Den `cc`-Fall fängt
+  `tests/build-selection-smoke.py` zum Teil vorher ab: der Test konfiguriert ein kleines
   C-Projekt, sobald `cmake` installiert ist. Findet CMake dort keinen C-Compiler, bricht der
   Lauf mit `No CMAKE_C_COMPILER could be found` ab, bevor `validate.sh` seinen eigenen
-  `cc`-Zweig erreicht. Auf dem macOS-Runner, dessen Userland dieses Paket abbildet, ist
-  ein übersprungener Lauf kein Erfolg.
+  `cc`-Zweig erreicht. Ohne `cmake` überspringt der Test diesen Teil, und ein vorhandenes
+  `clang` genügt CMake auch ohne `cc`. Auf dem macOS-Runner, dessen Userland dieses Paket
+  abbildet, ist ein übersprungener Lauf kein Erfolg.
 
 Was diese CI **nicht** prüft: sie klont den Upstream nicht, baut die Engine nicht und
 lädt keine Gewichte. Ein grünes Badge belegt den Zustand des Pakets, nicht dass der
