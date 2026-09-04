@@ -13,8 +13,12 @@ command -v git >/dev/null 2>&1 || {
     exit 1
 }
 # Not just "inside a work tree": unpacking the package into a subdirectory of some other
-# repository would otherwise hash that repository's file list.
-[ "$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)" = "$HERE" ] || {
+# repository would otherwise hash that repository's file list. --show-prefix is empty
+# exactly at the root and, unlike a string comparison against --show-toplevel, it stays
+# right when the path used to get here runs through a symlink, which on macOS is the
+# normal case for anything under /tmp.
+git -C "$HERE" rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
+[ -z "$(git -C "$HERE" rev-parse --show-prefix 2>/dev/null)" ] || {
     echo "make-sha256sums: $HERE is not the root of a git work tree" >&2
     exit 1
 }
