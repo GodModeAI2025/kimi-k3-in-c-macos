@@ -11,7 +11,7 @@ mkdir -p "$TMP"
 # would stop matching and this NEGATIVE assertion would pass silently on the one platform
 # the package exists to support. POSIX bracket expressions behave the same everywhere.
 
-python3 -m py_compile "$HERE/apply_macos_port.py" "$HERE/selftest.py"
+python3 -m py_compile "$HERE/apply_macos_port.py" "$HERE/selftest.py" "$HERE/upstream-delta.py"
 "$HERE/selftest.py"
 "$HERE/tests/build-selection-smoke.py"
 "$HERE/tests/neon-parity.py"

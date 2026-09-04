@@ -8,6 +8,22 @@ ein Tag ab, das nicht `v` plus diese Nummer ist.
 Vor 1.5.0 gibt es keinen veröffentlichten Stand. `VERSION` trug zwischenzeitlich 1.0.0,
 das war eine Nummer im Repo und kein Release: es gab weder Tag noch Archiv.
 
+## Unveröffentlicht
+
+Noch keine neue Nummer: an dem, was das Paket tut, ändert sich hier nichts.
+
+- Der Abstand zum Upstream ist gemessen statt geschätzt. `UPSTREAM.md` führt jede Stelle
+  des Transformers gegen `117e9d29` auf: was der Upstream inzwischen selbst hat, was
+  eigenes Delta bleibt, und womit das jeweils belegt ist.
+- `upstream-delta.py` ist das Werkzeug dazu. Es legt Sonden über `replace_once`,
+  `write_file` und `make_executable`, wendet nichts an und läuft gegen jeden beliebigen
+  Upstream-Checkout.
+- `beitrag/` hält den einen Punkt bereit, der nach der Messung als eigenständiger Beitrag
+  taugt: die libomp-Erkennung im Makefile des Upstream, als Patch gegen `117e9d2`, mit
+  Pull-Request-Text und einem Skript, das ihn einreicht. Eingereicht ist nichts.
+- Der Abschnitt zu CPU-Streaming und MLX-Quants in `README.md` hat jetzt eine Zeile zur
+  Qualität und drei Fragen, an denen sich die Entscheidung entlanghangeln lässt.
+
 ## 1.5.0
 
 Erstes Release dieses Repositoriums. Stand des Pakets: 4. September 2026.

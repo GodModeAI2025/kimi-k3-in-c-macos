@@ -12,6 +12,8 @@ Patch, ein Installer und eine netzfreie Prüfsuite.
 - `install-macos.sh`, der genau diesen Commit klont, portiert, baut und testet
 - native NEON-Pfade für die BF16- und MXFP4-Dot-Products auf Apple Silicon
 - `validate.sh` und `tests/`, eine Offline-Prüfsuite für dieses Paket selbst
+- `upstream-delta.py`, das den Port gegen einen beliebigen Upstream-Stand misst, ohne
+  ihn anzuwenden
 
 ## Was du nicht bekommst
 
@@ -29,6 +31,13 @@ Für Leute mit einem Mac und viel schnellem lokalem Speicher, die Kimi K3 von de
 streamen wollen und Sekunden pro Token als Größenordnung akzeptieren. Wer ein interaktiv
 nutzbares Modell auf dem Mac sucht, liest zuerst
 [CPU-Streaming oder MLX-Quants](#cpu-streaming-oder-mlx-quants).
+
+Vorher noch eine Einordnung, die sich seit August verschoben hat: der Upstream hat am
+26. August 2026 eigene macOS- und Apple-Silicon-Unterstützung gemerged. Ein großer Teil
+dessen, was dieses Paket tut, steht dort inzwischen selbst. Was noch eigenes Delta ist
+und was nicht, ist nachgemessen und steht Zeile für Zeile in [UPSTREAM.md](UPSTREAM.md).
+Wer heute mit einem frischen Upstream-Checkout anfängt, braucht davon vermutlich weniger,
+als der Umfang dieses Pakets vermuten lässt.
 
 ## Zielplattform und was die CI davon abdeckt
 
@@ -236,9 +245,24 @@ Die Entscheidung, die sich wirklich stellt, ist deshalb eine andere:
 | --- | --- | --- |
 | Gewichte im RAM | nein, es wird pro Layer nachgeladen | ja, vollständig |
 | Speicher | ab 10 GiB RAM, dafür rund 1,56 TB schneller lokaler Speicher | so viel RAM, wie der Quant groß ist |
-| Größenordnung | Sekunden pro Token | Token pro Sekunde |
+| Latenz | Sekunden pro Token | Token pro Sekunde |
+| Qualität | die des veröffentlichten Checkpoints: der Trunk wird verlustfrei gestreamt und nicht nachquantisiert, die Experten liegen im Checkpoint ohnehin schon als MXFP4 vor | die des kleineren Modells, zusätzlich um den Quantisierungsfehler verschoben |
+| Qualität, belegt durch | Upstream-README zu MXFP4 im ausgelieferten Checkpoint und Upstream-Roadmap, Abschnitt *Explicitly not planned*: nachträgliches int4 misst rund 17 % mittleren relativen Gewichtsfehler auf den K3-Attention-Tensoren, int8 rund 1 %, deshalb wird der Trunk nicht angefasst | nichts aus diesem Repo; hier ist nie ein MLX-Modell gelaufen |
 | brauchbar für | Batch, Offline-Auswertung, ein Modell dieser Größe überhaupt laufen sehen | interaktive Nutzung |
 | Lizenz | Apache 2.0 für den Code des Upstream und dieses Ports, die Gewichte haben ihre eigene | hängt am jeweiligen Modell |
+
+Drei Fragen entscheiden das in der Praxis, in dieser Reihenfolge:
+
+1. **Muss es Kimi K3 sein?** Wenn ein Modell einer kleineren Klasse die Aufgabe löst, ist
+   MLX der kürzere Weg und dieses Paket das falsche Werkzeug. Der einzige Grund für den
+   Weg hier ist, dass es dieses Modell sein soll.
+2. **Wie viel schneller lokaler Speicher ist da?** Unter etwa 1,56 TB endet der Weg vor
+   dem ersten Token, unabhängig vom RAM. Die Leserate zählt dabei genauso wie der Platz,
+   weil sie pro Token anfällt und nicht einmalig; der Doctor misst sie mit einer
+   sequentiellen Leseprobe und gibt das Ergebnis ausdrücklich als obere Schranke aus.
+3. **Sind Sekunden pro Token in Ordnung?** Wenn nein, hilft an dieser Stelle keine
+   Einstellung. Die Zeit geht für das Nachladen der Gewichte drauf, nicht für die
+   Rechnung, und daran ändert ein größerer Mac wenig.
 
 **Zahlen für macOS gibt es hier nicht.** Der Doctor nennt in seiner Preset-Leiter
 veröffentlichte Linux-Werte von etwa 19 bis 32 Sekunden pro Token, je nach Speicherbudget,
@@ -251,17 +275,23 @@ Werte stünden hier nur, um eine Tabelle zu füllen.
 
 Der Stand ist ein Schnappschuss. Was ansteht, in dieser Reihenfolge:
 
-1. **Über den Upstream-Drift entscheiden.** Der Port hängt an `85ab2cd9` vom 1. August
-   2026, festgezogen am 3. August 2026. Nachgeprüft am 4. September 2026: Upstream-`main` steht bei `117e9d29` vom
-   26. August 2026 und ist 36 Commits voraus, mit einem eigenen Job
-   `build-and-test-macos` auf `macos-14`. Zwei Wege stehen offen, und nur einer wird
-   gegangen: Rebase auf den neuen Stand samt Zusammenführung der beiden macOS-Jobs, oder
-   das Paket bleibt ausdrücklich ein eingefrorener Schnappschuss auf `85ab2cd9`. Bis zur
-   Entscheidung gilt der Schnappschuss.
+1. **Den Upstream-Beitrag einreichen.** Der Drift ist am 4. September 2026 gemessen
+   worden, Stelle für Stelle, und die Entscheidung ist gefallen: der Pin bleibt auf
+   `85ab2cd9`, ein Rebase auf `117e9d29` würde überwiegend Änderungen wiederherstellen,
+   die der Upstream inzwischen selbst hat. Von den Punkten, die er noch nicht hat, ist
+   einer klein und wichtig genug für einen eigenen Pull Request: der Upstream setzt auf
+   Darwin unbedingt `-lomp`, womit `make` auf einem Mac ohne Homebrew-libomp am Linker
+   stirbt. Der Patch dagegen liegt fertig in [`beitrag/`](beitrag/README.md), geprüft
+   gegen `117e9d2`. Eingereicht ist er nicht, das ist der nächste Schritt und eine
+   Handlung des Eigentümers: `beitrag/einreichen.sh`. Die Messung steht in
+   [UPSTREAM.md](UPSTREAM.md).
 2. **Doctor-Pin nachziehen.** `apply_macos_port.py` nagelt `scripts/k3-doctor.sh` per
    SHA-256 auf `66b13087…` fest, der aktuelle Upstream-Doctor hasht auf `91b5e903…`.
    Gegen Upstream-`main` bricht der Transformer also ab, wie vorgesehen. Der Pin gehört
-   zu Punkt 1 und wird nicht einzeln nachgezogen.
+   zu Punkt 1 und wird nicht einzeln nachgezogen. Der Doctor ist zugleich das größte
+   offene Delta: upstream ist er weiterhin ausdrücklich `LINUX ONLY` und weist einen Mac
+   in Zeile 18 ab. Ihn dort zu ersetzen ist eine Entscheidung des Upstream-Eigentümers
+   und kein Patch, den man ungefragt schickt.
 3. **Was nach 1.5.0 kommt.** `v1.5.0` ist der eingefrorene Schnappschuss auf `85ab2cd9`.
    Punkt 1 verschwindet dadurch nicht, er wandert in die nächste Nummer: ein Rebase
    ändert, was das Paket tut, und das ist eine neue Version und kein Nachtrag zu dieser.
