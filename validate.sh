@@ -69,4 +69,34 @@ else
     echo "validate: no sha256 tool; skipped manifest check"
 fi
 
-echo "validate: package checks passed"
+# Verifying the listed hashes says nothing about the files that are NOT listed, and two
+# of them were missing for a while. Compare the manifest against the versioned files, but
+# only when this really is the checkout root: an unpacked release has no git metadata,
+# and a copy inside an unrelated repository would be measured against that repository.
+# --show-prefix rather than a comparison against --show-toplevel, because $HERE keeps the
+# symlinks of the path it was reached through and --show-toplevel resolves them.
+if command -v git >/dev/null 2>&1 &&
+   git -C "$HERE" rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
+   [ -z "$(git -C "$HERE" rev-parse --show-prefix 2>/dev/null)" ]; then
+    LISTED=$(sed -E 's|^[0-9a-f]+  \./||' "$HERE/SHA256SUMS")
+    TRACKED=$(git -C "$HERE" ls-files | grep -vx SHA256SUMS)
+    if [ "$LISTED" != "$TRACKED" ]; then
+        echo "validate: SHA256SUMS does not list every versioned file; run ./make-sha256sums.sh" >&2
+        diff <(printf '%s\n' "$TRACKED") <(printf '%s\n' "$LISTED") >&2 || true
+        exit 1
+    fi
+    echo "validate: SHA256SUMS lists every versioned file except itself"
+else
+    echo "validate: no checkout root; skipped the SHA256SUMS coverage check"
+fi
+
+# VERSION had no reader anywhere in the package, so nothing would have noticed it going
+# out of step with a tag or with the release notes. Read it here and reject anything that
+# is not a plain three-part number, then carry it into the closing line.
+PKG_VERSION=$(tr -d ' \t\r\n' < "$HERE/VERSION")
+printf '%s\n' "$PKG_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+    echo "validate: VERSION does not hold a plain version number: '$PKG_VERSION'" >&2
+    exit 1
+}
+
+echo "validate: package checks passed for version $PKG_VERSION"

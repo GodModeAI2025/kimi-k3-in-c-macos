@@ -89,8 +89,18 @@ doctor smoke: simulated Darwin/arm64 checks passed
 validate: installer and transformer use the same upstream commit
 validate: Darwin API syntax smoke passed
 validate: arm64 NEON compile smoke passed (no fused multiply-add)
-validate: package checks passed
+validate: SHA256SUMS is self-consistent (staleness check, not authenticity)
+validate: SHA256SUMS lists every versioned file except itself
+validate: package checks passed for version 1.5.0
 ```
+
+Die Versionsnummer der letzten Zeile stammt aus `VERSION`. `validate.sh` liest die Datei
+und bricht ab, wenn dort keine dreiteilige Nummer steht.
+
+Das Manifest wird nicht von Hand gepflegt, sondern mit `./make-sha256sums.sh` aus
+`git ls-files` erzeugt. `validate.sh` prüft beide Hälften: die Hashes der gelisteten
+Dateien und ob die Liste alle versionierten Dateien enthält. `SHA256SUMS` selbst steht
+nicht darin, eine Prüfsummendatei enthält ihre eigene Prüfsumme nicht.
 
 ## Zweite Review-Runde: was gegen Apples Quellen geprüft wurde
 
@@ -126,6 +136,16 @@ Zusätzlich lokal gemessen statt vermutet:
 - `command -v cc` kann auf macOS nicht fehlschlagen: `/usr/bin/cc`, `make` und `git` sind
   `xcrun`-Shims, die auch ohne Command Line Tools existieren. Doctor und Installer rufen
   die Werkzeuge jetzt auf, statt nur ihre Namen aufzulösen.
+- Die Leseprobe des Doctors war locale- und tempoabhängig. `/usr/bin/time -p` schreibt in
+  einer Komma-Locale `real 0,00`; `awk` vergleicht diese Zeichenkette mit 0 als String,
+  findet sie größer und ließ die Probe die Plausibilitätsprüfung passieren. Der Doctor
+  meldete dann `ok  sequential read probe:  (upper bound)` ohne Zahl, dazu eine Division
+  durch Null auf stderr. Unter `LC_ALL=C` scheiterte dieselbe Messung an der Prüfung und
+  landete in der Warnung `duration could not be parsed`. Gemessen vor der Reparatur:
+  6 Fehlschläge in 20 Läufen von `tests/doctor-macos-smoke.sh` unter `de_DE.UTF-8`,
+  3 in 10 Läufen unter `LC_ALL=C`. Zeitmessung und Arithmetik laufen jetzt unter
+  `LC_ALL=C`, und eine Dauer unterhalb der Auflösung von 0,01 s bekommt eine eigene
+  Meldung statt einer leeren Zahl.
 
 ### Tests, die vorher nichts prüfen konnten
 
@@ -140,6 +160,17 @@ Zusätzlich lokal gemessen statt vermutet:
 - `darwin-platform-smoke.c` verwendete `_DARWIN_C_SOURCE`, während `k3_run.c` nur
   `_POSIX_C_SOURCE` deklarierte. Der Test übersetzte damit ein anderes `struct rusage` als
   die echte Datei — genau deshalb blieb der harte Build-Fehler unentdeckt.
+- Der zweite Probelauf mit dem `dd`-Ersatz belegte nur, dass die Ratenrechnung überhaupt
+  ausgeführt wird. Gegen den unreparierten Stand liefert er dieselbe Zeile
+  `sequential read probe: 1 MB/s (upper bound)`, in `de_DE.UTF-8` wie unter `LC_ALL=C`:
+  `awk` entscheidet locale-blind, ob eine Zuweisung wie eine Zahl aussieht, lässt `1,00`
+  als String durch den Vergleich mit 0 und wandelt sie danach über ein locale-abhängiges
+  `strtod` doch wieder in 1.0. Nur eine Dauer von exakt `0,00` teilt durch Null, und keine
+  Zusicherung kann die Uhr dazu bringen, diese zu liefern. Der Smoke-Test prüft die
+  Locale-Pins deshalb am erzeugten `port.DOCTOR`-Text: `LC_ALL=C /usr/bin/time -p` muss
+  vorkommen, und kein `awk` im Probe-Block darf ohne `LC_ALL=C` stehen. Verifiziert: gegen
+  `apply_macos_port.py` vor der Reparatur schlägt der Test in beiden Locales fehl, ein
+  Rückbau allein der drei `awk`-Pins ebenso.
 
 ## Dritte und vierte Runde: Bedienbarkeit und Prüfschärfe
 
