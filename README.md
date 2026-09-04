@@ -177,6 +177,11 @@ schlägt `validate.sh` und mit ihm die CI fehl:
 ./make-sha256sums.sh
 ```
 
+`./validate.sh` läuft auch im entpackten Release-Archiv; die Abdeckungsprüfung des Manifests
+überspringt es dort mit einer Meldung, weil die Git-Metadaten fehlen. `./make-sha256sums.sh`
+gehört dagegen zum Klon und bricht im entpackten Archiv mit `is not the root of a git work
+tree` ab.
+
 ## Release bauen
 
 Das Artefakt entsteht lokal, ohne GitHub und ohne Netz:
@@ -185,6 +190,10 @@ Das Artefakt entsteht lokal, ohne GitHub und ohne Netz:
 ./scripts/make-release-archive.sh dist
 ./scripts/check-release-archive.sh dist/kimi-k3-in-c-macos-1.5.0.zip
 ```
+
+Auch das ist ein Weg für den Klon: `make-release-archive.sh` nimmt die Dateiliste aus
+`git ls-files` und bricht im entpackten Archiv mit `ist nicht die Wurzel eines
+git-Arbeitsbaums` ab. `check-release-archive.sh` prüft ein fertiges ZIP und braucht kein Repo.
 
 Zwei Läufe liefern dasselbe Archiv, Byte für Byte: alle Zeitstempel im ZIP stehen fest,
 die Dateiliste ist sortiert, und die Modi kommen aus dem Git-Index statt aus der `umask`

@@ -21,7 +21,8 @@ Erstes Release dieses Repositoriums. Stand des Pakets: 4. September 2026.
 - `install-macos.sh`, der den gepinnten Upstream klont, portiert, baut und testet
 - `validate.sh` und `tests/`, die netzfreie Prüfsuite für das Paket selbst
 - `make-sha256sums.sh` und `scripts/` für Manifest und Release-Archiv
-- `README.md`, `UPSTREAM.md`, `VALIDATION.md`, `CHANGELOG.md`, `LICENSE`, `NOTICE`
+- `README.md`, `UPSTREAM.md`, `VALIDATION.md`, `CHANGELOG.md`, `SECURITY.md`, `LICENSE`,
+  `NOTICE`
 
 Nicht im Archiv: `.github/`, `.gitignore` und alles andere, was nur zum Betrieb dieses
 Repositoriums gehört. `scripts/check-release-archive.sh` prüft beide Richtungen, was
