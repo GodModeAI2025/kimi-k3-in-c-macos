@@ -1,9 +1,10 @@
+4ed4530c872c82ea7b4d54bc877e6110eabb564accf73376a445ec09aeb34894  ./.github/workflows/ci.yml
 862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793  ./.gitignore
 cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30  ./LICENSE
 2bd6a9a0727ecee03c41c92e12aff17d62408739dbabf79e4400d24cecc5e784  ./NOTICE
-4cc31e3ecefab732ec04d1306f4ae9d056b286555cbf8da0000abc2be167bb66  ./README.md
+66924694b66cde0d09e8cdb788272068e837a56637651f6ceaedb64ebeb17fc1  ./README.md
 7c879dd6506375dec93753249560135b5f725b0e8a7ea914321e2e8e06450a79  ./UPSTREAM.md
-f9aabdc984d6d1ab88ca93d8c0a57a14afe2fe077f8cf80071fffcc2373f09cb  ./VALIDATION.md
+8f50b7df06cbe34e5c3fae275858b42a969432fb7aa65abb47fba401dbcd16c0  ./VALIDATION.md
 acb57a7135b2d7d6e665f67f056e21353023b93835f54def1ae523bf76f1bfb3  ./VERSION
 481d2610227c45ba0420c4aa6c65c0041b60666b18e679043ce7a2c0cea9b9a0  ./apply_macos_port.py
 88e9761fc03be3676ca9fb2660ab5af4c699b6554e6a9a9a7ae667e9e6d4add0  ./install-macos.sh
@@ -11,7 +12,7 @@ acb57a7135b2d7d6e665f67f056e21353023b93835f54def1ae523bf76f1bfb3  ./VERSION
 b4f4f20e3d0ec3a47a1a9f8e804326c0ce29de062759a1e79ff287eaabb78bef  ./selftest.py
 0fd4ddd221734f2c798cd97dacdd5984795ee680b989dd17c852a47cdd65ab6f  ./tests/build-selection-smoke.py
 7aba606e1ab8d8e297fe6554d4ffa3b68f3732f177c9643d1d707f9c8fca266e  ./tests/ci-shell-smoke.py
-7c89ba5b220a303a59cdb83e307d0c8df3e81d63ee0377bc6ded93c7c896c421  ./tests/darwin-platform-smoke.c
+1ba8dc06eafa0ce1699f0d41ac2a7735b9d855dfc0a2c6d11f3fe5353bcc4531  ./tests/darwin-platform-smoke.c
 e14ff9f37e58992186f61dc04edccbd6b5176cd0da6515a56c53b8668e39282b  ./tests/doctor-macos-smoke.sh
 e3528e27af0c289d9f8b468f6140d4704ee6a84742788a2cc43aebe9d4652596  ./tests/neon-parity.py
 00496eebe2c54b41c50e1d384b072cc48d6c95430572d01b5faf3016b040ff23  ./tests/neon-smoke.c

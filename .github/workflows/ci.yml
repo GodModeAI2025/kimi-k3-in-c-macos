@@ -1,0 +1,127 @@
+name: CI
+
+# Geprueft wird das Portierungspaket selbst, nicht die Engine: es gibt hier keinen
+# Upstream-Quelltext und keine Modellgewichte, und die CI darf beides nicht voraussetzen.
+# Was der Installer erst holt, wird hier nicht gebaut.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Ohne diese Zeile laeuft jeder run-Block als `bash -e`, also ohne pipefail.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  paket-linux:
+    name: Paketpruefungen (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Kontextersetzungen und Idempotenz
+        run: ./selftest.py
+
+      - name: Make- und CMake-Architekturauswahl
+        run: ./tests/build-selection-smoke.py
+
+      - name: NEON-Kernel gegen den Transformer
+        run: ./tests/neon-parity.py
+
+      - name: Shell der erzeugten Workflow-Bloecke
+        run: ./tests/ci-shell-smoke.py
+
+      - name: Shell-Skripte des Pakets syntaktisch pruefen
+        run: |
+          for f in validate.sh install-macos.sh make-sha256sums.sh \
+                   tests/doctor-macos-smoke.sh; do
+              bash -n "$f"
+              echo "bash -n: $f"
+          done
+
+      - name: SHA256SUMS deckt jede versionierte Datei ab und ist aktuell
+        run: |
+          sha256sum -c SHA256SUMS --quiet
+          ./make-sha256sums.sh
+          git diff --exit-code -- SHA256SUMS
+
+      - name: Upstream-Pin steht in Code und Dokumentation gleich
+        run: |
+          BASE=$(python3 apply_macos_port.py --print-base-commit)
+          grep -q "BASE_COMMIT=\"$BASE\"" install-macos.sh
+          for f in README.md UPSTREAM.md VALIDATION.md; do
+              grep -q "$BASE" "$f" || {
+                  echo "$f nennt nicht den Commit $BASE" >&2
+                  exit 1
+              }
+          done
+          echo "Upstream-Pin $BASE: Installer, README.md, UPSTREAM.md, VALIDATION.md"
+
+      - name: Badge zeigt auf einen vorhandenen Workflow
+        run: |
+          WF=$(grep -o 'actions/workflows/[A-Za-z0-9._-]*/badge\.svg' README.md |
+               sed 's|actions/workflows/||; s|/badge\.svg||' | sort -u) || true
+          if [ -z "$WF" ]; then
+              echo "README.md enthaelt kein CI-Badge" >&2
+              exit 1
+          fi
+          for w in $WF; do
+              if [ ! -f ".github/workflows/$w" ]; then
+                  echo "Badge zeigt auf .github/workflows/$w, die Datei fehlt" >&2
+                  exit 1
+              fi
+              echo "Badge verweist auf .github/workflows/$w"
+          done
+
+  vollpruefung-macos:
+    # Die Suite prueft BSD-Userland-Verhalten: shasum statt sha256sum, BSD-grep ohne \b,
+    # /usr/bin/time -p in der Leseprobe des Doctors, die xcrun-Shims fuer cc und make.
+    # Auf Linux laufen diese Zweige nie.
+    name: Vollpruefung (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Vollstaendige Offline-Pruefung
+        run: |
+          # tee statt Umleitung: bei einem Fehlschlag muss auf der Konsole stehen,
+          # welche Pruefung zuletzt durchlief. Der Exit-Code kommt ueber pipefail,
+          # das die shell-Voreinstellung oben setzt.
+          ./validate.sh 2>&1 | tee "$RUNNER_TEMP/validate.log"
+
+      - name: Die plattformabhaengigen Pruefungen wurden nicht uebersprungen
+        # validate.sh ueberspringt Pruefungen mit einer Meldung und bleibt dabei gruen,
+        # wenn cc, clang, ein sha256-Werkzeug oder die Git-Metadaten des Checkouts fehlen.
+        # tests/build-selection-smoke.py laeuft vorher und faengt davon einen Fall ab: ist
+        # cmake installiert und findet CMake seinerseits keinen C-Compiler, bricht der Test
+        # mit "No CMAKE_C_COMPILER could be found" ab. Ohne cmake ueberspringt er den
+        # CMake-Teil, und ein vorhandenes clang genuegt CMake auch ohne cc. Auf dem Runner,
+        # dessen Userland dieses Paket abbildet, ist ein uebersprungener Lauf kein Erfolg.
+        run: |
+          LOG="$RUNNER_TEMP/validate.log"
+          for line in \
+              'doctor smoke: simulated Darwin/arm64 checks passed' \
+              'validate: Darwin API syntax smoke passed' \
+              'validate: arm64 NEON compile smoke passed' \
+              'validate: SHA256SUMS is self-consistent' \
+              'validate: SHA256SUMS lists every versioned file except itself'; do
+              grep -qF "$line" "$LOG" || {
+                  echo "uebersprungen statt ausgefuehrt: $line" >&2
+                  exit 1
+              }
+              echo "ausgefuehrt: $line"
+          done

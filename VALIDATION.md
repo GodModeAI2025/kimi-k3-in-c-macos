@@ -1,8 +1,11 @@
 # Validierungsbericht
 
-**Datum:** 3. August 2026
+**Datum:** 3. August 2026, fortgeschrieben am 4. September 2026
 **Bezugsstand:** `85ab2cd901aa81b70caac7711f06864d594b8ff3`
-**Ziel-Plattform:** macOS 27, Apple Silicon
+**Ziel-Plattform:** macOS 27, Apple Silicon. Die Paketprüfung ist am 4. September 2026 auf
+macOS 27 gelaufen (Darwin 27.0.0, arm64, Apple clang 21.0.0). Die Engine ist auf macOS 27
+nie gebaut worden, und ein `macos-27`-Runner-Image gibt es nicht, siehe „Nicht in dieser
+Umgebung ausführbar“ am Ende.
 
 ## Erfolgreich ausgeführte Prüfungen
 
@@ -18,7 +21,7 @@
   alle sechs `ctest`-Tests
 
 Damit ist belegt, dass der Port die Referenzplattform nicht beschädigt. Das ist die
-stärkste Aussage, die sich ohne Apple-Hardware treffen lässt.
+stärkste Aussage, die sich ohne einen Build der Engine auf einem Mac treffen lässt.
 
 ### Transformationslogik
 
@@ -38,12 +41,14 @@ stärkste Aussage, die sich ohne Apple-Hardware treffen lässt.
 - ARM64-Cross-Compile der verwendeten NEON-Intrinsics mit Clang und
   `--target=aarch64-none-elf`
 - Compile-Smoke-Test für `F_NOCACHE`, `F_RDADVISE`, Darwin-`ru_maxrss` und die Form der
-  Mach-VM-Aufrufe. **Einschränkung:** mangels macOS-SDK deklariert dieser Test die
-  Mach-Typen und -Konstanten selbst. Er prüft die Code-Form (Argumenttypen, das
-  in/out-`count`-Protokoll, die Fehlerpfade), **nicht** Apples echte Header. Das echte
-  `vm_statistics64_data_t` hat rund zwanzig 32-Bit-`natural_t`-Zähler; deshalb weitet der
-  Engine-Code jeden Zähler vor der Summe auf `uint64_t`. Gegen das echte SDK übersetzt
-  ausschließlich die macOS-CI.
+  Mach-VM-Aufrufe. **Einschränkung:** die Mach-Typen und -Konstanten deklariert der Test
+  selbst, damit er auch ohne macOS-SDK übersetzt. Für diesen Teil prüft er nur die
+  Code-Form (Argumenttypen, das in/out-`count`-Protokoll, die Fehlerpfade) und **nichts**
+  an Apples echten Headern; `fcntl` und `getrusage` kommen dagegen aus dem SDK, sobald der
+  Test auf einem Mac läuft. Das echte `vm_statistics64_data_t` hat rund zwanzig
+  32-Bit-`natural_t`-Zähler; deshalb weitet der Engine-Code jeden Zähler vor der Summe auf
+  `uint64_t`. Der Engine-Code selbst übersetzt gegen Apples Header ausschließlich in den
+  macOS-Jobs eines portierten Upstream-Checkouts.
 - **`tests/neon-parity.py`** prüft die tatsächlich injizierten Kernel, nicht eine
   Handkopie: es extrahiert die `__aarch64__`-Blöcke aus `apply_macos_port.py`, vergleicht
   ihre vollständige Intrinsic-Reihenfolge mit `tests/neon-smoke.c` und schlägt bei einer
@@ -101,6 +106,29 @@ Das Manifest wird nicht von Hand gepflegt, sondern mit `./make-sha256sums.sh` au
 `git ls-files` erzeugt. `validate.sh` prüft beide Hälften: die Hashes der gelisteten
 Dateien und ob die Liste alle versionierten Dateien enthält. `SHA256SUMS` selbst steht
 nicht darin, eine Prüfsummendatei enthält ihre eigene Prüfsumme nicht.
+
+### CI dieses Repositoriums
+
+`.github/workflows/ci.yml` fährt genau diese Prüfungen, verteilt auf zwei Runner:
+
+- `paket-linux` auf `ubuntu-latest`: `selftest.py`, die drei Python-Smoke-Tests unter `tests/`,
+  `bash -n` für die Shell-Skripte des Pakets, die Abdeckung von `SHA256SUMS` gegen
+  `git ls-files` sowie zwei Konsistenzprüfungen zwischen Code und Dokumentation, nämlich
+  der Upstream-Commit und das Ziel des Badges.
+- `vollpruefung-macos` auf `macos-latest`: `./validate.sh` vollständig, danach eine
+  Prüfung, dass die plattformabhängigen Blöcke wirklich gelaufen sind. `validate.sh`
+  überspringt einzelne Blöcke mit einer Meldung und bleibt grün, wenn `cc`, `clang`, ein
+  SHA-256-Werkzeug oder die Git-Metadaten des Checkouts fehlen. Den `cc`-Fall fängt
+  `tests/build-selection-smoke.py` zum Teil vorher ab: der Test konfiguriert ein kleines
+  C-Projekt, sobald `cmake` installiert ist. Findet CMake dort keinen C-Compiler, bricht der
+  Lauf mit `No CMAKE_C_COMPILER could be found` ab, bevor `validate.sh` seinen eigenen
+  `cc`-Zweig erreicht. Ohne `cmake` überspringt der Test diesen Teil, und ein vorhandenes
+  `clang` genügt CMake auch ohne `cc`. Auf dem macOS-Runner, dessen Userland dieses Paket
+  abbildet, ist ein übersprungener Lauf kein Erfolg.
+
+Was diese CI **nicht** prüft: sie klont den Upstream nicht, baut die Engine nicht und
+lädt keine Gewichte. Ein grünes Badge belegt den Zustand des Pakets, nicht dass der
+portierte Baum auf Apple Silicon übersetzt.
 
 ## Zweite Review-Runde: was gegen Apples Quellen geprüft wurde
 
@@ -182,8 +210,10 @@ Zusätzlich lokal gemessen statt vermutet:
   Baums ohne `-Werror`. Ein macOS-Job übersetzt ihn jetzt mit `-Werror`.
 - Kein macOS-Job baute je mit OpenMP. Zwei neue Schritte fahren den Standard-`make`
   einmal ohne und einmal mit installiertem `libomp` und prüfen per `otool -L`, dass
-  `bin/k3` im ersten Fall **kein** `libomp` linkt — das ist der Regressionstest für den
-  kritischsten Befund dieser Prüfung, und er läuft auf echter Apple-Hardware.
+  `bin/k3` im ersten Fall **kein** `libomp` linkt. Das ist der Regressionstest für den
+  kritischsten Befund dieser Prüfung. Ausgeführt wird er bisher nicht: die beiden Schritte
+  stehen in dem Workflow, den der Port in einen Upstream-Checkout schreibt, und einen
+  solchen Checkout gibt es in der CI dieses Repositoriums nicht.
 - `scripts/k3-doctor.sh` ist die einzige Datei, die vollständig ersetzt wird. Sie wurde
   über zwei Teilzeichenketten „erkannt“, womit lokale Änderungen kommentarlos verworfen
   worden wären — genau die Zusicherung, die das Paket bewirbt, an der einzigen Stelle
@@ -202,19 +232,22 @@ Zusätzlich lokal gemessen statt vermutet:
 
 Diese Grenze ist hart und wird hier nicht beschönigt:
 
-- kein nativer Build auf einem realen Apple-Silicon-Mac
-- kein nativer Build auf einem realen Intel-Mac
+- kein nativer Build der Engine auf einem realen Apple-Silicon-Mac; auf einem solchen
+  Rechner gelaufen ist nur die Prüfsuite dieses Pakets
+- kein nativer Build der Engine auf einem realen Intel-Mac
 - kein vollständiger Testlauf mit dem etwa 1,56 TB großen Checkpoint
 - keine Performance-Messung eines 93-Layer-Laufs auf Apple-Hardware
 - die Darwin-Codepfade (`F_NOCACHE`, `F_RDADVISE`, Mach-VM-Statistiken, `ru_maxrss`)
   wurden auf Syntax und API-Verwendung geprüft, aber **nie ausgeführt**
-- es gibt keinen macOS-SDK und keinen Emulator in dieser Umgebung, also kompiliert
-  nirgends der *echte* `k3_ops.c` für Darwin/arm64; geprüft werden die injizierten
-  NEON-Blöcke einzeln gegen ein Bare-Metal-aarch64-Target
+- in diesem Repository liegt kein Upstream-Quelltext, also kompiliert hier nirgends der
+  *echte* `k3_ops.c` für Darwin/arm64; geprüft werden die injizierten NEON-Blöcke einzeln
+  gegen ein Bare-Metal-aarch64-Target
 
 Dafür ergänzt der Port GitHub-Actions-Jobs für `macos-26`, `macos-15` und
 `macos-26-intel`. Diese Jobs bauen den Port mit Make und CMake und führen die Tests ohne
-Modellgewichte aus, sobald die Änderungen in einem GitHub-Branch oder Pull Request laufen.
+Modellgewichte aus, sobald sie in einem Repository mit dem Upstream-Quelltext laufen, auf
+den der Port angewendet wurde. Ein Push oder Pull Request in diesem Repository löst sie
+nicht aus, siehe „CI dieses Repositoriums“.
 `macos-26` ist das neueste allgemein verfügbare Image und damit der beste verfügbare
 Stellvertreter für macOS 27; sobald ein `macos-27`-Image GA ist, gehört es in die Matrix.
 Für Intel gibt es keinen macOS-27-Job und wird es keinen geben, weil macOS 26 die letzte
