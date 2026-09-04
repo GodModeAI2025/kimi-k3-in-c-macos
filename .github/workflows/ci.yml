@@ -98,8 +98,10 @@ jobs:
 
       - name: Vollstaendige Offline-Pruefung
         run: |
-          ./validate.sh > "$RUNNER_TEMP/validate.log"
-          cat "$RUNNER_TEMP/validate.log"
+          # tee statt Umleitung: bei einem Fehlschlag muss auf der Konsole stehen,
+          # welche Pruefung zuletzt durchlief. Der Exit-Code kommt ueber pipefail,
+          # das die shell-Voreinstellung oben setzt.
+          ./validate.sh 2>&1 | tee "$RUNNER_TEMP/validate.log"
 
       - name: Die plattformabhaengigen Pruefungen wurden nicht uebersprungen
         # validate.sh ueberspringt Pruefungen, wenn cc, clang, sha256 oder das

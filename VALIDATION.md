@@ -2,7 +2,9 @@
 
 **Datum:** 3. August 2026
 **Bezugsstand:** `85ab2cd901aa81b70caac7711f06864d594b8ff3`
-**Ziel-Plattform:** macOS 27, Apple Silicon
+**Ziel-Plattform:** macOS 27, Apple Silicon. Ausgeführt worden ist auf macOS 27
+nichts: es gibt kein `macos-27`-Runner-Image, siehe „Nicht in dieser Umgebung
+ausführbar“ am Ende.
 
 ## Erfolgreich ausgeführte Prüfungen
 
@@ -101,6 +103,24 @@ Das Manifest wird nicht von Hand gepflegt, sondern mit `./make-sha256sums.sh` au
 `git ls-files` erzeugt. `validate.sh` prüft beide Hälften: die Hashes der gelisteten
 Dateien und ob die Liste alle versionierten Dateien enthält. `SHA256SUMS` selbst steht
 nicht darin, eine Prüfsummendatei enthält ihre eigene Prüfsumme nicht.
+
+### CI dieses Repositoriums
+
+`.github/workflows/ci.yml` fährt genau diese Prüfungen, verteilt auf zwei Runner:
+
+- `paket-linux` auf `ubuntu-latest`: `selftest.py`, die drei Python-Smoke-Tests unter `tests/`,
+  `bash -n` für die Shell-Skripte des Pakets, die Abdeckung von `SHA256SUMS` gegen
+  `git ls-files` sowie zwei Konsistenzprüfungen zwischen Code und Dokumentation, nämlich
+  der Upstream-Commit und das Ziel des Badges.
+- `vollpruefung-macos` auf `macos-latest`: `./validate.sh` vollständig, danach eine
+  Prüfung, dass die plattformabhängigen Blöcke wirklich gelaufen sind. `validate.sh`
+  überspringt sie mit einer Meldung, wenn `cc`, `clang` oder ein SHA-256-Werkzeug fehlen,
+  und bleibt dabei grün. Auf dem macOS-Runner, dessen Userland dieses Paket abbildet, ist
+  ein übersprungener Lauf kein Erfolg.
+
+Was diese CI **nicht** prüft: sie klont den Upstream nicht, baut die Engine nicht und
+lädt keine Gewichte. Ein grünes Badge belegt den Zustand des Pakets, nicht dass der
+portierte Baum auf Apple Silicon übersetzt.
 
 ## Zweite Review-Runde: was gegen Apples Quellen geprüft wurde
 
