@@ -1,0 +1,141 @@
+From 4f30472952e051db4f1b2120f8070982934d2de8 Mon Sep 17 00:00:00 2001
+From: Mark Zimmermann <mark_zimmermann@me.com>
+Date: Fri, 4 Sep 2026 22:40:12 +0200
+Subject: [PATCH] build: build without OpenMP when libomp is absent on macOS
+
+The Darwin block sets OMP_CFLAGS and OMP_LDFLAGS unconditionally, so `make` on a
+Mac that has Homebrew but not libomp compiles every object and then dies at the
+link with `ld: library 'omp' not found`. Nothing in a normal toolchain pulls that
+formula in, so it is the default state of the machine rather than an edge case,
+and README's "macOS/arm64 builds with plain make" does not hold there.
+
+`brew --prefix libomp` cannot decide this: it prints a path and exits 0 for a
+formula that is not installed, which is why the existing $(wildcard) guard warns
+without changing the flags. Probe for omp.h and libomp.dylib instead and, when
+either is missing, drop the flags rather than the build. Every parallel region in
+this tree sits behind `#ifdef _OPENMP` and nothing includes <omp.h>, so the
+result is a correct single-threaded binary; the warning says how to get the
+threads back, and an explicit OMP_PREFIX or OMP_LDFLAGS still overrides.
+
+The macOS CI job installs libomp and therefore never walks that path, so it gains
+a step that points OMP_PREFIX at a directory that does not exist, which is the
+only input the detection has. It runs `make test`, not just `make`: the serial
+build has to be correct, not merely linkable.
+
+Verified on macOS 27, Apple Silicon, Apple clang 21.0.0:
+
+  before, libomp absent: ld: library 'omp' not found, make: *** [bin/k3] Error 1
+  after,  libomp absent: links, otool -L shows no libomp, `make test` reports
+                         22 passed, 0 failed, 0 skipped / ALL WEIGHTLESS TESTS PASSED
+  after,  libomp present: otool -L shows libomp.dylib, same test output
+  make portable: builds with no compiler warnings in both states
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BL7UoPomBp2Luhg89R6fYk
+---
+ .github/workflows/ci.yml | 16 ++++++++++++++++
+ Makefile                 | 38 +++++++++++++++++++++++++++++---------
+ README.md                |  4 +++-
+ 3 files changed, 48 insertions(+), 10 deletions(-)
+
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 2917df7..9659801 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -100,6 +100,22 @@ jobs:
+           grep -q "VERDICT: ENGINE MATCHES THE REFERENCE EXACTLY" "$RUNNER_TEMP/t.log"
+           grep -q "ALL WEIGHTLESS TESTS PASSED"    "$RUNNER_TEMP/t.log"
+ 
++      # The step above installed libomp, which is what a CI box has and what most Macs
++      # do not: nothing else in a normal toolchain pulls the formula in. That is the
++      # machine `make` used to die on, at the link rather than at the flags, so it needs
++      # its own step. OMP_PREFIX is the only input the detection block has, so pointing
++      # it at a directory that does not exist reproduces "Homebrew present, libomp
++      # absent" exactly and without uninstalling anything. `make test`, not just `make`:
++      # the serial build has to be correct, not merely linkable.
++      - name: Build + test without libomp (serial fallback)
++        run: |
++          make clean
++          make OMP_PREFIX="$RUNNER_TEMP/no-libomp" -j"$(getconf _NPROCESSORS_ONLN)"
++          make OMP_PREFIX="$RUNNER_TEMP/no-libomp" test -j"$(getconf _NPROCESSORS_ONLN)" \
++              2>&1 | tee "$RUNNER_TEMP/serial.log"
++          grep -q "22 passed, 0 failed, 0 skipped" "$RUNNER_TEMP/serial.log"
++          grep -q "ALL WEIGHTLESS TESTS PASSED"    "$RUNNER_TEMP/serial.log"
++
+   # A separate job rather than a matrix leg, for the same reason as macOS: the setup
+   # action is MSYS2-specific, and the platform-detection block in the Makefile has a
+   # dedicated Windows branch (matched on the MINGW substring of `uname -s`) that only
+diff --git a/Makefile b/Makefile
+index 0443fba..72992d7 100644
+--- a/Makefile
++++ b/Makefile
+@@ -11,9 +11,10 @@
+ #
+ # Nothing here requires a checkpoint. `make test` is the gate that must stay green.
+ #
+-# PLATFORMS. Linux/x86-64 is the reference. macOS/arm64 builds with plain `make` too,
+-# but needs Homebrew's libomp for OpenMP (`brew install libomp`) because Apple Clang
+-# ships no OpenMP runtime; the platform block below detects and wires it up. Windows
++# PLATFORMS. Linux/x86-64 is the reference. macOS/arm64 builds with plain `make` too.
++# Apple Clang ships no OpenMP runtime, so the platform block below wires up Homebrew's
++# libomp (`brew install libomp`) when it is installed and builds serial when it is not,
++# which keeps `make` working on a Mac that never asked for libomp. Windows
+ # builds under MSYS2's MinGW64 environment (`pacman -S mingw-w64-x86_64-gcc`) -- open
+ # the "MSYS2 MinGW x64" shell specifically, not the plain MSYS2 shell, so `cc`/`make`
+ # resolve to the native-Windows-target toolchain rather than the POSIX-emulation one;
+@@ -62,12 +63,31 @@ ifeq ($(UNAME_S),Darwin)
+   # process spawn. A command-line `make OMP_PREFIX=...` still wins either way, because
+   # command-line assignments override makefile assignments regardless of flavour.
+   OMP_PREFIX := $(shell brew --prefix libomp 2>/dev/null || echo /opt/homebrew/opt/libomp)
+-  OMP_CFLAGS ?= -Xpreprocessor -fopenmp -I$(OMP_PREFIX)/include
+-  OMP_LDFLAGS ?= -L$(OMP_PREFIX)/lib -lomp
+-  # Say what is wrong and how to fix it, rather than letting the compiler report a
+-  # missing omp.h fifty lines into the build.
+-  ifeq ($(wildcard $(OMP_PREFIX)/include/omp.h),)
+-    $(warning libomp not found at $(OMP_PREFIX). Install it with `brew install libomp`,)
++  # `brew --prefix libomp` PRINTS A PATH AND EXITS 0 for a formula that is not installed,
++  # so a non-empty answer proves nothing about what is on disk. Probe for the two files
++  # the build actually consumes. Without the probe, the default `make` on a Mac that has
++  # Homebrew but not libomp -- the common case, since nothing else here pulls it in --
++  # compiles every object and then dies at the link with `ld: library 'omp' not found`.
++  OMP_HEADER := $(wildcard $(OMP_PREFIX)/include/omp.h)
++  OMP_LIB    := $(wildcard $(OMP_PREFIX)/lib/libomp.dylib)
++  ifeq ($(OMP_HEADER),)
++    OMP_ABSENT := 1
++  endif
++  ifeq ($(OMP_LIB),)
++    OMP_ABSENT := 1
++  endif
++  ifeq ($(OMP_ABSENT),)
++    OMP_CFLAGS ?= -Xpreprocessor -fopenmp -I$(OMP_PREFIX)/include
++    OMP_LDFLAGS ?= -L$(OMP_PREFIX)/lib -lomp
++  else
++    # Serial rather than broken. Every parallel region in this tree sits behind
++    # `#ifdef _OPENMP` and nothing includes <omp.h>, so dropping the flags produces a
++    # correct single-threaded binary rather than a compile error -- it costs throughput
++    # on the expert matmuls, which is a fair trade against a build that does not finish.
++    OMP_CFLAGS ?=
++    OMP_LDFLAGS ?=
++    $(warning libomp not found at $(OMP_PREFIX): building WITHOUT OpenMP, single-threaded.)
++    $(warning Install it with `brew install libomp` for the threaded build,)
+     $(warning or point the build at another copy with `make OMP_PREFIX=/path/to/libomp`.)
+   endif
+ else ifneq ($(findstring MINGW,$(UNAME_S)),)
+diff --git a/README.md b/README.md
+index 3554ea1..009e348 100644
+--- a/README.md
++++ b/README.md
+@@ -593,7 +593,9 @@ hour in. Shorten the request, or drop `--incremental`, which carries no KV cache
+ needs nothing at all, and `--layers N` runs against partial shard sets.
+ 
+ **macOS, Windows, WSL?** Linux is the reference platform. macOS/arm64 builds with plain
+-`make` (see the Makefile's platform block). Windows builds natively too, via MSYS2's
++`make` (see the Makefile's platform block); with Homebrew's libomp installed that build
++uses OpenMP, and without it the block drops the flags and builds single-threaded rather
++than failing at the link. Windows builds natively too, via MSYS2's
+ MinGW-w64 GCC (`pacman -S mingw-w64-x86_64-gcc`, then open the "MSYS2 MinGW x64" shell
+ specifically -- `make`, `make test`, and `make test-all` all pass every gate unmodified,
+ including the full-model oracle and tokenizer parity against real Kimi K3 weights.
+-- 
+2.50.1 (Apple Git-155)
+

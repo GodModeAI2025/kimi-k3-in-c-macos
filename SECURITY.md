@@ -2,20 +2,24 @@
 
 ## Unterstützte Versionen
 
-`1.5.0` ist das erste Release dieses Repositoriums, davor gab es weder Tag noch Archiv. Die
-Nummer steht in `VERSION` und nirgendwo sonst. Gelesen wird die Datei von `validate.sh`,
+`VERSION` nennt die Nummer, unter der dieser Baum als Archiv erscheint. Sie wurde gegenüber dem
+Vorgänger angehoben, weil sich der Inhalt geändert hat: dieselbe Nummer soll nicht zwei Stände
+bezeichnen. Die Nummer steht in `VERSION` und nirgendwo sonst. Gelesen wird die Datei von `validate.sh`,
 `scripts/make-release-archive.sh`, `scripts/check-release-archive.sh`,
 `scripts/release-notes.sh` und `.github/workflows/release.yml`, das ein Tag ablehnt, das nicht
 `v` plus diese Nummer ist.
 
 | Stand | unterstützt |
 | --- | --- |
-| `1.5.0` und der aktuelle Commit auf `main` | ja |
+| der aktuelle Commit auf `main`, derzeit `1.5.1` | ja |
+| das veröffentlichte Archiv `1.5.0` | ja |
 | ältere Checkouts, Forks, Kopien | nein |
 
-Gemeldet und behoben wird gegen den aktuellen Stand von `main`, Backports gibt es nicht. Das
-Archiv aus dem Abschnitt „Direkt auf dem Mac installieren“ in `README.md` ist der Stand des
-Releases; wer den neuesten Stand will, klont `main`.
+Gemeldet und behoben wird gegen den aktuellen Stand von `main`, Backports gibt es nicht. Der
+Abschnitt „Direkt auf dem Mac installieren“ in `README.md` nennt die Nummer aus `VERSION`, also
+`1.5.1`; ein Archiv dazu gibt es erst, wenn das Tag steht. Veröffentlicht ist bisher allein
+`1.5.0`, und dessen Archiv ist nicht mehr der Stand von `main`. Wer den aktuellen Stand will,
+klont `main`.
 
 ## Schwachstelle melden
 
@@ -101,7 +105,7 @@ nirgends jemand.
 - **SHA256SUMS beweist keine Authentizität.** Manifest und Prüfer liegen im selben Baum, wer
   eine Datei ändert, erzeugt beides neu. `validate.sh` schreibt das selbst hin (Zeile 55 bis 58
   und 64 bis 67) und meldet den Erfolg als „staleness check, not authenticity“. Abgedeckt sind
-  25 von 26 versionierten Dateien; nicht abgedeckt ist allein `SHA256SUMS`, das seinen eigenen
+  30 von 31 versionierten Dateien; nicht abgedeckt ist allein `SHA256SUMS`, das seinen eigenen
   Hash nicht enthalten kann. Fehlen `sha256sum` und `shasum`, überspringt `validate.sh`
   Zeile 68 bis 69 die Prüfung kommentarlos.
 - **Der Pin ist veraltet.** `UPSTREAM.md` Zeile 5 nennt als Stand des Ports den 3. August 2026;
@@ -109,7 +113,10 @@ nirgends jemand.
   GitHub-API geprüft am 4. September 2026). Gegen diesen Stand bricht der Port an der
   Doctor-Hash-Prüfung ab (`91b5e903…` gegen gepinnte `66b13087…`), und weil `install-macos.sh`
   unter `set -euo pipefail` läuft, startet der Build nicht. Das ist eine Bremse, keine Prüfung:
-  wer den Pin hochzieht und die Kontextfehler nachzieht, baut ungeprüften Code.
+  wer den Pin hochzieht und die Kontextfehler nachzieht, baut ungeprüften Code. Was gegen
+  diesen Stand noch eigenes Delta ist und was der Upstream inzwischen selbst hat, ist am
+  4. September 2026 Stelle für Stelle gemessen worden und steht in `UPSTREAM.md`;
+  nachmessen lässt es sich mit `./upstream-delta.py <upstream-checkout>`.
 - **Die CI prüft das Paket, nicht die Engine.** `.github/workflows/ci.yml` fährt bei jedem
   Push auf `main` und in jedem Pull Request gegen `main` die Prüfsuite auf Linux und macOS,
   dazu die Manifest-Prüfung und den Bau des Release-Archivs. Upstream-Quelltext liegt hier

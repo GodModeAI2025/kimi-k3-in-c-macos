@@ -90,15 +90,16 @@ build-selection smoke: Make and CMake architecture logic passed
 neon-parity: injected NEON blocks match tests/neon-smoke.c
 neon-parity: injected NEON kernels emit no FMA at any contraction setting
 neon-parity: the scalar reduction DOES fuse on aarch64 without -ffp-contract=off
+ci-shell-smoke: 7 workflow run blocks are valid bash
 doctor smoke: simulated Darwin/arm64 checks passed
 validate: installer and transformer use the same upstream commit
 validate: Darwin API syntax smoke passed
 validate: arm64 NEON compile smoke passed (no fused multiply-add)
 validate: SHA256SUMS is self-consistent (staleness check, not authenticity)
 validate: SHA256SUMS lists every versioned file except itself
-validate: CHANGELOG.md has an entry for version 1.5.0
-validate: the documented download path matches kimi-k3-in-c-macos-1.5.0.zip
-validate: package checks passed for version 1.5.0
+validate: CHANGELOG.md has an entry for version 1.5.1
+validate: the documented download path matches kimi-k3-in-c-macos-1.5.1.zip
+validate: package checks passed for version 1.5.1
 ```
 
 Die Versionsnummer der letzten Zeile stammt aus `VERSION`. `validate.sh` liest die Datei

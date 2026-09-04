@@ -45,7 +45,8 @@ jobs:
         run: |
           for f in validate.sh install-macos.sh make-sha256sums.sh \
                    scripts/make-release-archive.sh scripts/check-release-archive.sh \
-                   scripts/release-notes.sh tests/doctor-macos-smoke.sh; do
+                   scripts/release-notes.sh tests/doctor-macos-smoke.sh \
+                   beitrag/einreichen.sh; do
               bash -n "$f"
               echo "bash -n: $f"
           done

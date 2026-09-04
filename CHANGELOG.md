@@ -8,6 +8,52 @@ ein Tag ab, das nicht `v` plus diese Nummer ist.
 Vor 1.5.0 gibt es keinen veröffentlichten Stand. `VERSION` trug zwischenzeitlich 1.0.0,
 das war eine Nummer im Repo und kein Release: es gab weder Tag noch Archiv.
 
+## 1.5.1
+
+Warum überhaupt eine neue Nummer: der Inhalt des Pakets hat sich seit `v1.5.0` bewegt,
+die Nummer nicht, und damit hätte dieselbe Nummer zwei verschiedene Stände bezeichnet.
+Gemessen: das veröffentlichte Asset `kimi-k3-in-c-macos-1.5.0.zip` hat den SHA-256
+`ede5ef20bc6f799937c1f24d009d01c2d3f8bf8cd2308e7b4afb10ce7b77be3b` und 23 Einträge, aus dem
+Baum am Stand `69b823c` entstand unter demselben Namen ein Archiv mit 28. Fünf Dateien sind neu
+(`upstream-delta.py` und die vier unter `beitrag/`), sechs weitere haben einen anderen
+Inhalt: `README.md`, `CHANGELOG.md`, `UPSTREAM.md`, `SECURITY.md`, `validate.sh` und
+`SHA256SUMS`. Kein Prüfer im Paket hätte das gemeldet, weil keiner das gebaute Archiv
+gegen das veröffentlichte hält; aufgefallen ist es beim Nachbauen von Hand.
+
+Ein Patch-Stand und keine neue Minor-Nummer: an dem, was der Port mit dem
+Upstream-Quelltext macht, ändert sich nichts. Der Pin bleibt `85ab2cd9`,
+`apply_macos_port.py` ist unverändert, `install-macos.sh` auch.
+
+- `beitrag/einreichen.sh` wertet jedes Argument aus statt nur des ersten. Vorher war
+  `--probe` keine Option, sondern eine Position: `einreichen.sh --ja --probe` verwarf das
+  `--probe` still und fuhr ohne Rückfrage Fork, Push und Pull Request gegen ein fremdes
+  Repositorium. Unbekannte Optionen brechen jetzt an jeder Stelle mit Rückgabewert 2 ab.
+  `--probe` schlägt `--ja`.
+- Der Abstand zum Upstream ist gemessen statt geschätzt. `UPSTREAM.md` führt jede Stelle
+  des Transformers gegen `117e9d29` auf: was der Upstream inzwischen selbst hat, was
+  eigenes Delta bleibt, und womit das jeweils belegt ist.
+- `upstream-delta.py` ist das Werkzeug dazu. Es legt Sonden über `replace_once`,
+  `write_file` und `make_executable`, wendet nichts an und läuft gegen jeden beliebigen
+  Upstream-Checkout.
+- `beitrag/` hält den einen Punkt bereit, der nach der Messung als eigenständiger Beitrag
+  taugt: die libomp-Erkennung im Makefile des Upstream, als Patch gegen `117e9d2`, mit
+  Pull-Request-Text und einem Skript, das ihn einreicht. Eingereicht ist nichts.
+- Der Abschnitt zu CPU-Streaming und MLX-Quants in `README.md` hat jetzt eine Zeile zur
+  Qualität und drei Fragen, an denen sich die Entscheidung entlanghangeln lässt.
+
+### Installieren
+
+```bash
+curl -LO https://github.com/GodModeAI2025/kimi-k3-in-c-macos/releases/download/v1.5.1/kimi-k3-in-c-macos-1.5.1.zip
+unzip kimi-k3-in-c-macos-1.5.1.zip
+cd kimi-k3-in-c-macos-1.5.1
+shasum -a 256 -c SHA256SUMS
+./install-macos.sh ~/src/kimi-k3-in-c-macos
+```
+
+Dieses Archiv entsteht mit dem Tag zu dieser Nummer. Ältere Releases tragen den Stand ihres
+eigenen Tags, nicht diesen.
+
 ## 1.5.0
 
 Erstes Release dieses Repositoriums. Stand des Pakets: 4. September 2026.
