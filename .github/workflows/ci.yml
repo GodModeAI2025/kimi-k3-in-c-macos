@@ -44,7 +44,8 @@ jobs:
       - name: Shell-Skripte des Pakets syntaktisch pruefen
         run: |
           for f in validate.sh install-macos.sh make-sha256sums.sh \
-                   tests/doctor-macos-smoke.sh; do
+                   scripts/make-release-archive.sh scripts/check-release-archive.sh \
+                   scripts/release-notes.sh tests/doctor-macos-smoke.sh; do
               bash -n "$f"
               echo "bash -n: $f"
           done
@@ -54,6 +55,26 @@ jobs:
           sha256sum -c SHA256SUMS --quiet
           ./make-sha256sums.sh
           git diff --exit-code -- SHA256SUMS
+
+      # Ein kaputtes Paket soll bei jedem Push auffallen, nicht erst, wenn das Tag steht
+      # und das Release schon angelegt ist. Deshalb baut die CI dasselbe Artefakt, das
+      # release.yml spaeter hochlaedt, und laesst denselben Pruefer darauf los.
+      - name: Release-Archiv bauen und pruefen
+        run: |
+          NAME=$(./scripts/make-release-archive.sh --print-name)
+          ./scripts/make-release-archive.sh "$RUNNER_TEMP/dist-eins"
+          ./scripts/make-release-archive.sh "$RUNNER_TEMP/dist-zwei"
+          # Kein Zeitstempel, kein zufaelliger Name: zwei Laeufe muessen Byte fuer Byte
+          # dasselbe Archiv liefern, sonst laesst sich ein Release nicht nachbauen.
+          cmp "$RUNNER_TEMP/dist-eins/$NAME" "$RUNNER_TEMP/dist-zwei/$NAME"
+          echo "zwei Laeufe liefern dasselbe Archiv: $NAME"
+          ./scripts/check-release-archive.sh "$RUNNER_TEMP/dist-eins/$NAME"
+
+      - name: Der Release-Text laesst sich aus CHANGELOG.md loesen
+        run: |
+          ./scripts/release-notes.sh > "$RUNNER_TEMP/release-body.md"
+          test -s "$RUNNER_TEMP/release-body.md"
+          echo "Release-Text: $(grep -c '' "$RUNNER_TEMP/release-body.md") Zeilen"
 
       - name: Upstream-Pin steht in Code und Dokumentation gleich
         run: |

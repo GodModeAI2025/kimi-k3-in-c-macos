@@ -1,0 +1,58 @@
+name: Release
+
+# Ausgeloest wird das nur von einem Tag. Gebaut, geprueft und beschriftet wird mit den
+# Skripten unter scripts/, die auch lokal und in ci.yml laufen; in diesem Workflow steht
+# keine Packaging-Logik. Ein run:-Block laeuft zum ersten Mal, wenn das Tag schon gesetzt
+# ist, und dann ist es fuer eine Ueberraschung zu spaet.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+# Ohne diese Zeile laeuft jeder run-Block als `bash -e`, also ohne pipefail.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    name: Archiv bauen und an das Release haengen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag und VERSION muessen dieselbe Nummer nennen
+        run: |
+          ERWARTET="v$(tr -d ' \t\r\n' < VERSION)"
+          if [ "$GITHUB_REF_NAME" != "$ERWARTET" ]; then
+              echo "Tag $GITHUB_REF_NAME passt nicht zu VERSION, erwartet war $ERWARTET" >&2
+              exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME deckt sich mit VERSION"
+
+      - name: Artefaktnamen bestimmen
+        id: artefakt
+        run: |
+          NAME=$(./scripts/make-release-archive.sh --print-name)
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "Artefakt: $NAME"
+
+      - name: Archiv bauen
+        run: ./scripts/make-release-archive.sh dist
+
+      - name: Archiv pruefen
+        run: ./scripts/check-release-archive.sh "dist/${{ steps.artefakt.outputs.name }}"
+
+      - name: Release-Text aus CHANGELOG.md loesen
+        run: ./scripts/release-notes.sh > "$RUNNER_TEMP/release-body.md"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ steps.artefakt.outputs.name }}
+          body_path: ${{ runner.temp }}/release-body.md
+          # Ohne diese Zeile legt ein fehlendes Artefakt ein leeres Release an, statt den
+          # Lauf rot zu faerben.
+          fail_on_unmatched_files: true
