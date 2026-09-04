@@ -75,12 +75,16 @@ xcode-select --install
 Dann das Release-Archiv holen, die Prüfsummen kontrollieren und den Installer starten:
 
 ```bash
-curl -LO https://github.com/GodModeAI2025/kimi-k3-in-c-macos/releases/download/v1.5.0/kimi-k3-in-c-macos-1.5.0.zip
-unzip kimi-k3-in-c-macos-1.5.0.zip
-cd kimi-k3-in-c-macos-1.5.0
+curl -LO https://github.com/GodModeAI2025/kimi-k3-in-c-macos/releases/download/v1.5.1/kimi-k3-in-c-macos-1.5.1.zip
+unzip kimi-k3-in-c-macos-1.5.1.zip
+cd kimi-k3-in-c-macos-1.5.1
 shasum -a 256 -c SHA256SUMS
 ./install-macos.sh ~/src/kimi-k3-in-c-macos
 ```
+
+`v1.5.1` ist die Nummer in `VERSION` und noch kein Tag: unter Releases liegt bisher nur
+`v1.5.0`, dessen Archiv nicht mehr dem Stand dieses Baums entspricht. Bis das Tag steht,
+führt der Weg über den Klon weiter unten.
 
 `shasum -a 256 -c SHA256SUMS` prüft, ob das Archiv in sich stimmig ist. Über die Herkunft
 sagt es nichts: Manifest und Prüfer liegen im selben Archiv, wer eine Datei ändert, erzeugt
@@ -197,7 +201,7 @@ Das Artefakt entsteht lokal, ohne GitHub und ohne Netz:
 
 ```bash
 ./scripts/make-release-archive.sh dist
-./scripts/check-release-archive.sh dist/kimi-k3-in-c-macos-1.5.0.zip
+./scripts/check-release-archive.sh dist/kimi-k3-in-c-macos-1.5.1.zip
 ```
 
 Auch das ist ein Weg für den Klon: `make-release-archive.sh` nimmt die Dateiliste aus
@@ -293,8 +297,10 @@ Der Stand ist ein Schnappschuss. Was ansteht, in dieser Reihenfolge:
    in Zeile 18 ab. Ihn dort zu ersetzen ist eine Entscheidung des Upstream-Eigentümers
    und kein Patch, den man ungefragt schickt.
 3. **Was nach 1.5.0 kommt.** `v1.5.0` ist der eingefrorene Schnappschuss auf `85ab2cd9`.
-   Punkt 1 verschwindet dadurch nicht, er wandert in die nächste Nummer: ein Rebase
-   ändert, was das Paket tut, und das ist eine neue Version und kein Nachtrag zu dieser.
+   `VERSION` steht inzwischen auf `1.5.1`, weil der Baum seit dem Tag ein anderes Archiv
+   baut als das veröffentlichte; der Pin bleibt dabei `85ab2cd9`. Punkt 1 verschwindet
+   dadurch nicht, er wandert in die nächste Minor-Nummer: ein Rebase ändert, was das
+   Paket tut, und das ist eine neue Version und kein Nachtrag zu dieser.
 4. **Auf echter Hardware messen.** Für diesen Port existiert kein einziger Durchsatzwert
    auf Apple Silicon. Solange das so bleibt, steht im Abschnitt oben keine Zahl.
 

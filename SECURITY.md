@@ -2,20 +2,25 @@
 
 ## Unterstützte Versionen
 
-`1.5.0` ist das erste Release dieses Repositoriums, davor gab es weder Tag noch Archiv. Die
-Nummer steht in `VERSION` und nirgendwo sonst. Gelesen wird die Datei von `validate.sh`,
+`1.5.0` ist das erste und bisher einzige Release dieses Repositoriums, davor gab es weder Tag
+noch Archiv. `VERSION` steht inzwischen auf `1.5.1`, zu dem es noch kein Tag gibt: der Baum baut
+ein anderes Archiv als das veröffentlichte `1.5.0`, und dieselbe Nummer soll nicht zwei Stände
+bezeichnen. Die Nummer steht in `VERSION` und nirgendwo sonst. Gelesen wird die Datei von `validate.sh`,
 `scripts/make-release-archive.sh`, `scripts/check-release-archive.sh`,
 `scripts/release-notes.sh` und `.github/workflows/release.yml`, das ein Tag ablehnt, das nicht
 `v` plus diese Nummer ist.
 
 | Stand | unterstützt |
 | --- | --- |
-| `1.5.0` und der aktuelle Commit auf `main` | ja |
+| der aktuelle Commit auf `main`, derzeit `1.5.1` | ja |
+| das veröffentlichte Archiv `1.5.0` | ja |
 | ältere Checkouts, Forks, Kopien | nein |
 
-Gemeldet und behoben wird gegen den aktuellen Stand von `main`, Backports gibt es nicht. Das
-Archiv aus dem Abschnitt „Direkt auf dem Mac installieren“ in `README.md` ist der Stand des
-Releases; wer den neuesten Stand will, klont `main`.
+Gemeldet und behoben wird gegen den aktuellen Stand von `main`, Backports gibt es nicht. Der
+Abschnitt „Direkt auf dem Mac installieren“ in `README.md` nennt die Nummer aus `VERSION`, also
+`1.5.1`; ein Archiv dazu gibt es erst, wenn das Tag steht. Veröffentlicht ist bisher allein
+`1.5.0`, und dessen Archiv ist nicht mehr der Stand von `main`. Wer den aktuellen Stand will,
+klont `main`.
 
 ## Schwachstelle melden
 
