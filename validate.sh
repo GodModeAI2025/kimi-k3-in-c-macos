@@ -87,4 +87,13 @@ else
     echo "validate: no checkout root; skipped the SHA256SUMS coverage check"
 fi
 
-echo "validate: package checks passed"
+# VERSION had no reader anywhere in the package, so nothing would have noticed it going
+# out of step with a tag or with the release notes. Read it here and reject anything that
+# is not a plain three-part number, then carry it into the closing line.
+PKG_VERSION=$(tr -d ' \t\r\n' < "$HERE/VERSION")
+printf '%s\n' "$PKG_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+    echo "validate: VERSION does not hold a plain version number: '$PKG_VERSION'" >&2
+    exit 1
+}
+
+echo "validate: package checks passed for version $PKG_VERSION"

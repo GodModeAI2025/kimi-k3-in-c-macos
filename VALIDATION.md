@@ -91,8 +91,11 @@ validate: Darwin API syntax smoke passed
 validate: arm64 NEON compile smoke passed (no fused multiply-add)
 validate: SHA256SUMS is self-consistent (staleness check, not authenticity)
 validate: SHA256SUMS lists every versioned file except itself
-validate: package checks passed
+validate: package checks passed for version 1.5.0
 ```
+
+Die Versionsnummer der letzten Zeile stammt aus `VERSION`. `validate.sh` liest die Datei
+und bricht ab, wenn dort keine dreiteilige Nummer steht.
 
 Das Manifest wird nicht von Hand gepflegt, sondern mit `./make-sha256sums.sh` aus
 `git ls-files` erzeugt. `validate.sh` prüft beide Hälften: die Hashes der gelisteten
