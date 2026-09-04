@@ -223,8 +223,9 @@ Klon ist gering.
 
 ## Verifizierungsgrenze
 
-In dieser Arbeitsumgebung stand kein physischer macOS-Rechner und kein 1,56-TB-Checkpoint
-zur Verfügung. Deshalb wurden hier die Portierungslogik, Quellkontexte, Shell-Skripte,
+Die Prüfsuite dieses Pakets ist auf einem Apple-Silicon-Mac unter macOS 27 gelaufen. Die
+Engine selbst ist dort nicht gebaut worden, und der 1,56-TB-Checkpoint stand nicht zur
+Verfügung. Deshalb wurden hier die Portierungslogik, Quellkontexte, Shell-Skripte,
 Darwin-Codepfade, ARM64-Intrinsics sowie Make/CMake-Auswahl geprüft, aber kein kompletter
 93-Layer-Lauf auf echter Apple-Hardware gemessen. Der angewendete Port ergänzt native
 GitHub-Actions-Jobs, die genau diesen Build- und Testschritt auf ARM64- und Intel-macOS
@@ -235,7 +236,7 @@ Was **tatsächlich ausgeführt** wurde: der Port wird auf einen echten Klon des 
 Commits angewendet, und der portierte Baum baut auf Linux/x86-64 warnungsfrei und besteht
 die vollständige gewichtslose Testsuite (`make test` und `ctest`, letzteres mit
 `-DK3_ENABLE_OPENMP=OFF` wie in der macOS-CI). Damit ist belegt, dass der Port die
-Referenzplattform nicht beschädigt, und mehr lässt sich ohne Apple-Hardware nicht
-behaupten. Die Darwin-spezifischen Zweige selbst wurden nie ausgeführt, nur übersetzt und
-gelesen. Was dieser Prüfstand abdeckt und was nicht, steht Punkt für Punkt in
-[VALIDATION.md](VALIDATION.md).
+Referenzplattform nicht beschädigt, und mehr lässt sich ohne einen Build der Engine auf
+einem Mac nicht behaupten. Die Darwin-spezifischen Zweige selbst wurden nie ausgeführt,
+nur übersetzt und gelesen. Was dieser Prüfstand abdeckt und was nicht, steht Punkt für
+Punkt in [VALIDATION.md](VALIDATION.md).

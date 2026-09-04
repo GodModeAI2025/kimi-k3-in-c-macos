@@ -104,9 +104,11 @@ jobs:
           ./validate.sh 2>&1 | tee "$RUNNER_TEMP/validate.log"
 
       - name: Die plattformabhaengigen Pruefungen wurden nicht uebersprungen
-        # validate.sh ueberspringt Pruefungen, wenn cc, clang, sha256 oder das
-        # Checkout-Verzeichnis fehlen, und bleibt dabei gruen. Auf dem Runner, dessen
-        # Userland dieses Paket abbildet, ist ein solcher Lauf kein Erfolg.
+        # validate.sh ueberspringt Pruefungen, wenn clang, ein sha256-Werkzeug oder die
+        # Git-Metadaten des Checkouts fehlen, und bleibt dabei gruen. Ein fehlender
+        # C-Compiler degradiert dagegen nicht still: tests/build-selection-smoke.py laeuft
+        # vorher und bricht ab, sobald CMake keinen C-Compiler findet. Auf dem Runner,
+        # dessen Userland dieses Paket abbildet, ist ein uebersprungener Lauf kein Erfolg.
         run: |
           LOG="$RUNNER_TEMP/validate.log"
           for line in \

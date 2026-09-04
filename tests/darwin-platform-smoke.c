@@ -1,12 +1,14 @@
 /* Compile-only smoke test for Darwin-specific source fragments used by the port.
  *
- * WHAT THIS DOES NOT PROVE. There is no macOS SDK on the machine that runs the package
- * validation, so the Mach types and constants below are LOCAL STAND-INS, not Apple's.
- * The real vm_statistics64_data_t has around twenty natural_t (32-bit) counters and a
- * real HOST_VM_INFO64_COUNT near 38, not the three-field uint64_t struct declared here.
- * So this file checks that the code SHAPE compiles -- the fcntl calls, the getrusage
- * unit handling, the argument types and the in/out `count` protocol -- and nothing about
- * Apple's headers. Only the macOS CI jobs compile against the real SDK.
+ * WHAT THIS DOES NOT PROVE. The Mach types and constants below are LOCAL STAND-INS, not
+ * Apple's, so this file compiles wherever a C compiler exists, with or without a macOS
+ * SDK. The real vm_statistics64_data_t has around twenty natural_t (32-bit) counters and
+ * a real HOST_VM_INFO64_COUNT near 38, not the three-field uint64_t struct declared here.
+ * For the Mach half this file therefore checks that the code SHAPE compiles -- the
+ * argument types, the in/out `count` protocol and the failure paths -- and nothing about
+ * Apple's headers. The fcntl and getrusage calls do use the SDK's own declarations once
+ * this is built on a Mac. The engine itself is compiled against the real SDK only by the
+ * macOS jobs in a ported upstream checkout.
  *
  * The engine widens each counter to uint64_t before summing precisely because the real
  * fields are 32-bit; keep that cast if this stand-in is ever updated. */
