@@ -160,6 +160,17 @@ Zusätzlich lokal gemessen statt vermutet:
 - `darwin-platform-smoke.c` verwendete `_DARWIN_C_SOURCE`, während `k3_run.c` nur
   `_POSIX_C_SOURCE` deklarierte. Der Test übersetzte damit ein anderes `struct rusage` als
   die echte Datei — genau deshalb blieb der harte Build-Fehler unentdeckt.
+- Der zweite Probelauf mit dem `dd`-Ersatz belegte nur, dass die Ratenrechnung überhaupt
+  ausgeführt wird. Gegen den unreparierten Stand liefert er dieselbe Zeile
+  `sequential read probe: 1 MB/s (upper bound)`, in `de_DE.UTF-8` wie unter `LC_ALL=C`:
+  `awk` entscheidet locale-blind, ob eine Zuweisung wie eine Zahl aussieht, lässt `1,00`
+  als String durch den Vergleich mit 0 und wandelt sie danach über ein locale-abhängiges
+  `strtod` doch wieder in 1.0. Nur eine Dauer von exakt `0,00` teilt durch Null, und keine
+  Zusicherung kann die Uhr dazu bringen, diese zu liefern. Der Smoke-Test prüft die
+  Locale-Pins deshalb am erzeugten `port.DOCTOR`-Text: `LC_ALL=C /usr/bin/time -p` muss
+  vorkommen, und kein `awk` im Probe-Block darf ohne `LC_ALL=C` stehen. Verifiziert: gegen
+  `apply_macos_port.py` vor der Reparatur schlägt der Test in beiden Locales fehl, ein
+  Rückbau allein der drei `awk`-Pins ebenso.
 
 ## Dritte und vierte Runde: Bedienbarkeit und Prüfschärfe
 

@@ -21,6 +21,23 @@ Path(sys.argv[2]).write_text(port.DOCTOR, encoding="utf-8")
 PY
 chmod +x "$TMP/doctor.sh"
 
+# Pinned locale, checked on the generated text and therefore independent of what the
+# timer happens to measure. Every probe run below can only see the locale bug when the
+# read lands on exactly 0,00 s: awk's strnum test is locale-blind, so "real 1,00" slips
+# past the guard as a string, but the later conversion to a number goes through a
+# locale-aware strtod and yields 1.0 again -- an unpinned doctor prints the same correct
+# "1 MB/s" as a pinned one. Only 0,00 divides by zero, and no test can order the clock to
+# produce it. Verified: with the pins removed, this block fails and the runs below do not.
+grep -qF 'LC_ALL=C /usr/bin/time -p' "$TMP/doctor.sh" || {
+    echo "doctor smoke: the read timer is not pinned to LC_ALL=C" >&2
+    exit 1
+}
+if sed -n '/measuring sequential read/,/could not write a probe file/p' "$TMP/doctor.sh" |
+        grep -v '^[[:space:]]*#' | grep 'awk ' | grep -qv 'LC_ALL=C awk '; then
+    echo "doctor smoke: an awk in the storage probe is not pinned to LC_ALL=C" >&2
+    exit 1
+fi
+
 cat > "$TMP/bin/uname" <<'SH'
 #!/bin/sh
 case "$1" in -s) echo Darwin;; -m) echo arm64;; *) echo Darwin;; esac
