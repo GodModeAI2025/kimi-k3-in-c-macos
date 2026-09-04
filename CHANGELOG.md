@@ -41,20 +41,28 @@ eine Datei ändert, erzeugt beides neu. Die Prüfung fängt ein veraltetes Manif
 ist sie da; über die Herkunft der Dateien sagt sie nichts. Es gibt keine Signatur und
 keine Notarisierung.
 
-### Enthalten, seit `VERSION` auf 1.5.0 steht
+### Was seit dem ersten Stand des Repos dazugekommen ist
+
+Die Nummer 1.5.0 steht seit `0eeae06` vom 3. August 2026 in `VERSION`. Bis dahin, von
+1.0.0 aus, kamen die Befunde der Portierungsreview hinein:
 
 - `k3_run.c` schaltet auf `_DARWIN_C_SOURCE`; unter `_POSIX_C_SOURCE` ist `ru_maxrss` auf
-  Darwin kein gültiges Feld, der Port hätte auf keinem Mac übersetzt
+  Darwin kein gültiges Feld, der Port hätte auf keinem Mac übersetzt (`c01bf16`)
 - Lesevorgänge auf 1 GiB pro Aufruf begrenzt, weil Darwin jede Anforderung über `INT_MAX`
-  mit `EINVAL` ablehnt, während Linux kappt
+  mit `EINVAL` ablehnt, während Linux kappt (`c01bf16`)
 - `scripts/k3-doctor.sh` wird per SHA-256 festgenagelt statt über zwei Teilzeichenketten
-  erkannt, damit lokale Änderungen nicht kommentarlos verworfen werden
+  erkannt, damit lokale Änderungen nicht kommentarlos verworfen werden (`0eeae06`)
+
+Danach kam dazu, ohne neue Nummer, weil bis zu diesem Release nichts davon veröffentlicht
+war:
+
 - Zeitmessung und Arithmetik der Leseprobe laufen unter `LC_ALL=C`; in einer Komma-Locale
   meldete der Doctor vorher eine leere Rate und teilte auf stderr durch Null
 - `SHA256SUMS` wird aus `git ls-files` erzeugt, und `validate.sh` prüft beide Hälften:
   die Hashes und die Vollständigkeit der Liste
 - `validate.sh` liest `VERSION` und lehnt alles ab, was keine dreiteilige Nummer ist
 - `.github/workflows/ci.yml` fährt die Paketprüfungen auf Linux und macOS
+- die Release-Kette selbst: Packaging-Skript, Archivprüfer, Release-Workflow
 
 ### Installieren
 
