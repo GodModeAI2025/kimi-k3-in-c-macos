@@ -10,6 +10,8 @@ acb57a7135b2d7d6e665f67f056e21353023b93835f54def1ae523bf76f1bfb3  ./VERSION
 481d2610227c45ba0420c4aa6c65c0041b60666b18e679043ce7a2c0cea9b9a0  ./apply_macos_port.py
 88e9761fc03be3676ca9fb2660ab5af4c699b6554e6a9a9a7ae667e9e6d4add0  ./install-macos.sh
 26f5bd45c6ce1cdc7a541e510dc496b7d80388fe46bdfd310e8aa8c0719e16b0  ./make-sha256sums.sh
+363a963e1ba144137c73763d7566f6850dd8699c972a87faab18c1a0ea64d120  ./scripts/check-release-archive.sh
+aa938dba41ca2b6a5b029599c5f20834017b20733a264b969e3670939b4b00f5  ./scripts/make-release-archive.sh
 1e1f40e5a34e3a62cadb5677016a2bf8a66bfc2703920afcd245adfb6ccf8e61  ./scripts/release-notes.sh
 b4f4f20e3d0ec3a47a1a9f8e804326c0ce29de062759a1e79ff287eaabb78bef  ./selftest.py
 0fd4ddd221734f2c798cd97dacdd5984795ee680b989dd17c852a47cdd65ab6f  ./tests/build-selection-smoke.py
