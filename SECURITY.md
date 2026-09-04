@@ -39,7 +39,7 @@ Codeausführung auf der Maschine des Nutzers während `./install-macos.sh`.
 
 Was der Installer anfasst: ein `git clone` in Zeile 105, sonst kein Netzaufruf; `curl` und
 `wget` kommen im Skript nicht vor. `sudo` steht im ganzen Checkout nur als Wort in einem
-Kommentar (`apply_macos_port.py` Zeile 1114). Nichts läuft als root, und es gibt keinen Daemon.
+Kommentar (`apply_macos_port.py` Zeile 1120). Nichts läuft als root, und es gibt keinen Daemon.
 
 Der Angriffsweg führt über dieses Repo, nicht über Upstream allein. `install-macos.sh`
 Zeile 106 bis 111 checkt den gepinnten Commit aus und vergleicht `rev-parse HEAD` mit dem Pin;
@@ -82,7 +82,7 @@ Als nicht vertrauenswürdig behandelt:
   (Zeile 33, Begründung im Kommentar ab Zeile 28) im Speicher und schreibt sie erst nach der
   letzten erfolgreichen Ersetzung, damit ein Abbruch keinen halb portierten Baum hinterlässt.
 - Der Inhalt der einzigen vollständig ersetzten Datei. `scripts/k3-doctor.sh` ist per SHA-256
-  festgenagelt (`DOCTOR_BASE_SHA256`, Zeile 21, geprüft in Zeile 1194 bis 1200); bei Abweichung
+  festgenagelt (`DOCTOR_BASE_SHA256`, Zeile 21, geprüft in Zeile 1204 bis 1210); bei Abweichung
   verweigert der Transformer die Arbeit, statt lokale Änderungen kommentarlos zu verwerfen.
 
 Was der Pin leistet: der Commit-Name ist ein Inhaltshash über den ganzen Baum, git prüft ihn
@@ -116,11 +116,6 @@ nirgends jemand.
   keiner, also baut hier auch nichts die Engine; die macOS-Jobs, die der Port erzeugt, laufen
   erst im portierten Upstream-Checkout. Im Release-Archiv fehlen die Workflow-Dateien,
   `.github/` wird nicht mitgepackt.
-- **`validate.sh` ist kein stabiles Gate.** `tests/doctor-macos-smoke.sh` erzwingt in Zeile 115
-  eine 1-MB-Leseprobe und verlangt in Zeile 122 eine parsebare Rate. Der Doctor akzeptiert die
-  Messung nur bei `real > 0` (`apply_macos_port.py` Zeile 1110), `/usr/bin/time -p` löst auf
-  0,01 s auf, und die Leseprobe aus dem Cache landet oft genug auf `0.00`. Hier reproduziert:
-  2 Fehlläufe in 12 Durchläufen auf macOS.
 - **Vorhersagbare Temp-Pfade.** `validate.sh` und `tests/doctor-macos-smoke.sh` bilden in
   Zeile 5 jeweils `${TMPDIR:-/tmp}/…$$` und legen den Pfad in Zeile 7 mit `mkdir -p` an, das
   auf einem schon existierenden Verzeichnis durchläuft, statt mit `mktemp`. Auf macOS ist

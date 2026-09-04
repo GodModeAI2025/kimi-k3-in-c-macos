@@ -144,6 +144,10 @@ Packaging-Logik: es lehnt ein Tag ab, das nicht `v` plus `VERSION` ist, ruft
 Archiv mit `softprops/action-gh-release@v2` an das Release. Dieselben Skripte laufen in
 `ci.yml` und von Hand, deshalb ist der Tag-Lauf keine Premiere.
 
+Beide Workflow-Dateien liegen nur im Repositorium. Das Release-Archiv packt `.github/` nicht
+mit, wer diesen Abschnitt im entpackten Archiv liest, findet die beiden Dateien dort also
+nicht. Nachzulesen sind sie im Repositorium unter `.github/workflows/`.
+
 Was diese CI **nicht** prüft: sie klont den Upstream nicht, baut die Engine nicht und
 lädt keine Gewichte. Ein grünes Badge belegt den Zustand des Pakets, nicht dass der
 portierte Baum auf Apple Silicon übersetzt. Der Reproduzierbarkeitsvergleich gilt für zwei
