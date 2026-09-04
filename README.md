@@ -82,9 +82,9 @@ shasum -a 256 -c SHA256SUMS
 ./install-macos.sh ~/src/kimi-k3-in-c-macos
 ```
 
-`v1.5.1` ist die Nummer in `VERSION` und noch kein Tag: unter Releases liegt bisher nur
-`v1.5.0`, dessen Archiv nicht mehr dem Stand dieses Baums entspricht. Bis das Tag steht,
-führt der Weg über den Klon weiter unten.
+Die Nummer in `VERSION` sagt, welches Archiv zu diesem Baum gehört. Wer eine ältere Nummer
+unter Releases findet, hat ein Archiv eines anderen Standes vor sich. Solange zur aktuellen
+Nummer kein Release liegt, führt der Weg über den Klon weiter unten.
 
 `shasum -a 256 -c SHA256SUMS` prüft, ob das Archiv in sich stimmig ist. Über die Herkunft
 sagt es nichts: Manifest und Prüfer liegen im selben Archiv, wer eine Datei ändert, erzeugt

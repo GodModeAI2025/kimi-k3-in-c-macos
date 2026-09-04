@@ -2,9 +2,8 @@
 
 ## Unterstützte Versionen
 
-`1.5.0` ist das erste und bisher einzige Release dieses Repositoriums, davor gab es weder Tag
-noch Archiv. `VERSION` steht inzwischen auf `1.5.1`, zu dem es noch kein Tag gibt: der Baum baut
-ein anderes Archiv als das veröffentlichte `1.5.0`, und dieselbe Nummer soll nicht zwei Stände
+`VERSION` nennt die Nummer, unter der dieser Baum als Archiv erscheint. Sie wurde gegenüber dem
+Vorgänger angehoben, weil sich der Inhalt geändert hat: dieselbe Nummer soll nicht zwei Stände
 bezeichnen. Die Nummer steht in `VERSION` und nirgendwo sonst. Gelesen wird die Datei von `validate.sh`,
 `scripts/make-release-archive.sh`, `scripts/check-release-archive.sh`,
 `scripts/release-notes.sh` und `.github/workflows/release.yml`, das ein Tag ablehnt, das nicht

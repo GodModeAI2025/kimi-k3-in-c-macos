@@ -51,8 +51,8 @@ shasum -a 256 -c SHA256SUMS
 ./install-macos.sh ~/src/kimi-k3-in-c-macos
 ```
 
-Dieses Archiv entsteht, sobald das Tag `v1.5.1` steht. Bis dahin liegt unter Releases nur
-`v1.5.0`, und dessen Archiv ist nicht der Stand dieses Baums.
+Dieses Archiv entsteht mit dem Tag zu dieser Nummer. Ältere Releases tragen den Stand ihres
+eigenen Tags, nicht diesen.
 
 ## 1.5.0
 
