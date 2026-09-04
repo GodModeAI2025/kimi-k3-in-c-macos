@@ -5,6 +5,9 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TMP=${TMPDIR:-/tmp}/k3-doctor-smoke.$$
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 mkdir -p "$TMP/bin" "$TMP/model"
+# Resolved before the shim directory is put in front of PATH, so the dd stand-in further
+# down can still reach the real one.
+REAL_DD=$(command -v dd)
 
 python3 - "$HERE/apply_macos_port.py" "$TMP/doctor.sh" <<'PY'
 import importlib.util
@@ -119,8 +122,13 @@ grep -q 'measuring sequential read (1 MB temporary file)' "$TMP/output-probe" ||
     exit 1
 }
 if [ -x /usr/bin/time ]; then
-    grep -qE 'sequential read probe: [0-9]+ MB/s' "$TMP/output-probe" || {
-        echo "doctor smoke: the storage probe produced no parseable rate" >&2
+    # Both outcomes are correct for 1 MB out of the page cache: a rate, or the note that
+    # the read stayed under the 0.01 s that `time -p` can express. Demanding a rate here
+    # is what made this test fail on 6 of 20 runs, because which of the two you get
+    # depends on how busy the machine is.
+    grep -qE 'sequential read probe: [0-9]+ MB/s|below the 0.01 s resolution' \
+        "$TMP/output-probe" || {
+        echo "doctor smoke: the probe reported neither a rate nor the timer limit" >&2
         sed -n '/storage/,/model/p' "$TMP/output-probe" >&2
         exit 1
     }
@@ -130,6 +138,29 @@ else
         exit 1
     }
 fi
+
+# The rate arithmetic still has to be executed rather than assumed, and page-cache speed
+# will not supply a duration the timer can express. A dd stand-in delays the read leg by
+# a fixed second; the write leg keeps the real behaviour so the file that gets read is a
+# real file. The elapsed time would have to be mismeasured a hundredfold before the
+# assertion below stops holding.
+cat > "$TMP/bin/dd" <<SH
+#!/bin/sh
+case "\$*" in *of=/dev/null*) sleep 1 ;; esac
+exec "$REAL_DD" "\$@"
+SH
+chmod +x "$TMP/bin/dd"
+PATH="$TMP/bin:/usr/bin:/bin" K3_DOCTOR_PROBE_MB=1 \
+    "$TMP/doctor.sh" "$TMP/model" > "$TMP/output-rate"
+rm -f "$TMP/bin/dd"
+if [ -x /usr/bin/time ]; then
+    grep -qE 'sequential read probe: [0-9]+ MB/s' "$TMP/output-rate" || {
+        echo "doctor smoke: no rate although the read took a full second" >&2
+        sed -n '/storage/,/model/p' "$TMP/output-rate" >&2
+        exit 1
+    }
+fi
+
 # The probe file is written into the model directory and must never be left behind.
 if find "$TMP/model" -name '.k3_doctor_probe*' | grep -q .; then
     echo "doctor smoke: the storage probe left its temporary file behind" >&2

@@ -1104,11 +1104,17 @@ if [ -d "$TARGET" ]; then
         K3_PROBE_FILE="$TMPF"
         if dd if=/dev/zero of="$TMPF" bs=1048576 count="$PROBE_MB" 2>/dev/null; then
             sync
-            TIMING=$({ /usr/bin/time -p sh -c 'dd if="$1" of=/dev/null bs=4194304 2>/dev/null' sh "$TMPF"; } 2>&1)
-            SECONDS_REAL=$(printf '%s\n' "$TIMING" | awk '$1=="real"{print $2; exit}')
+            # LC_ALL=C on the timer and on the arithmetic. In a comma locale
+            # /usr/bin/time -p prints "real 0,00", awk then compares that against 0 as a
+            # STRING and finds it larger, so a read too fast to measure passed the guard
+            # below and printed an empty rate plus a division-by-zero line on stderr.
+            TIMING=$({ LC_ALL=C /usr/bin/time -p sh -c 'dd if="$1" of=/dev/null bs=4194304 2>/dev/null' sh "$TMPF"; } 2>&1)
+            SECONDS_REAL=$(printf '%s\n' "$TIMING" | LC_ALL=C awk '$1=="real"{print $2; exit}')
             rm -f "$TMPF"
-            if [ -n "${SECONDS_REAL:-}" ] && awk -v s="$SECONDS_REAL" 'BEGIN {exit !(s>0)}'; then
-                RATE=$(awk -v mb="$PROBE_MB" -v s="$SECONDS_REAL" 'BEGIN {printf "%.0f MB/s", mb/s}')
+            if [ -z "${SECONDS_REAL:-}" ]; then
+                warn "read probe completed, but its duration could not be parsed"
+            elif LC_ALL=C awk -v s="$SECONDS_REAL" 'BEGIN {exit !(s>0)}'; then
+                RATE=$(LC_ALL=C awk -v mb="$PROBE_MB" -v s="$SECONDS_REAL" 'BEGIN {printf "%.0f MB/s", mb/s}')
                 # Say what this number is. The file was written moments ago and is still
                 # in the buffer cache, and nothing here can evict it without privileges
                 # (BSD dd has no conv=fsync, and `purge` needs sudo). So the figure is an
@@ -1120,7 +1126,11 @@ if [ -d "$TARGET" ]; then
                 info "for a real figure use a probe larger than RAM, or the vendor spec"
                 info "the engine streams roughly 135 GB per token at the smallest budgets"
             else
-                warn "read probe completed, but its duration could not be parsed"
+                # Timed, but under the 0.01 s that the -p format can express. That is a
+                # different answer from "the timer said nothing", and it is the normal
+                # outcome for a small probe on a fast disk.
+                warn "read probe finished below the 0.01 s resolution of /usr/bin/time -p"
+                info "raise K3_DOCTOR_PROBE_MB until the read takes measurable time"
             fi
         else
             warn "could not write a probe file to $TARGET"

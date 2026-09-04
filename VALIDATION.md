@@ -133,6 +133,16 @@ Zusätzlich lokal gemessen statt vermutet:
 - `command -v cc` kann auf macOS nicht fehlschlagen: `/usr/bin/cc`, `make` und `git` sind
   `xcrun`-Shims, die auch ohne Command Line Tools existieren. Doctor und Installer rufen
   die Werkzeuge jetzt auf, statt nur ihre Namen aufzulösen.
+- Die Leseprobe des Doctors war locale- und tempoabhängig. `/usr/bin/time -p` schreibt in
+  einer Komma-Locale `real 0,00`; `awk` vergleicht diese Zeichenkette mit 0 als String,
+  findet sie größer und ließ die Probe die Plausibilitätsprüfung passieren. Der Doctor
+  meldete dann `ok  sequential read probe:  (upper bound)` ohne Zahl, dazu eine Division
+  durch Null auf stderr. Unter `LC_ALL=C` scheiterte dieselbe Messung an der Prüfung und
+  landete in der Warnung `duration could not be parsed`. Gemessen vor der Reparatur:
+  6 Fehlschläge in 20 Läufen von `tests/doctor-macos-smoke.sh` unter `de_DE.UTF-8`,
+  3 in 10 Läufen unter `LC_ALL=C`. Zeitmessung und Arithmetik laufen jetzt unter
+  `LC_ALL=C`, und eine Dauer unterhalb der Auflösung von 0,01 s bekommt eine eigene
+  Meldung statt einer leeren Zahl.
 
 ### Tests, die vorher nichts prüfen konnten
 
