@@ -18,7 +18,8 @@ Patch, ein Installer und eine netzfreie Prüfsuite.
 - **keine Modellgewichte.** Der Checkpoint liegt bei etwa 1,56 TB, der gepackte Trunk bei
   etwa 109 GB. Der Download ist deine Sache.
 - keine Kopie des Upstream-Repositories, der Installer holt sie beim Lauf
-- kein Release, kein Tag, kein ZIP. Es gibt nur den Git-Klon dieses Repos.
+- keine signierte oder notarisierte `k3`-Binary. Das Release ist ein Quellarchiv, gebaut
+  wird auf deinem Rechner.
 - keine Messung auf echter Apple-Hardware, siehe
   [Verifizierungsgrenze](#verifizierungsgrenze)
 
@@ -50,6 +51,10 @@ Zwei verschiedene CI-Konfigurationen sind im Spiel. Das Badge oben gehört zur e
 Das Badge sagt also nicht, dass die Engine auf Apple Silicon baut. Diese Aussage kann in
 diesem Repo gar nicht entstehen, weil hier kein Upstream-Quelltext liegt.
 
+`.github/workflows/release.yml` gehört in keine der beiden Zeilen: es läuft nur, wenn ein
+Tag `v*` gepusht wird, baut das Archiv und wiederholt vor dem Upload die Archivprüfung,
+die `ci.yml` bei jedem Push schon gefahren hat.
+
 ## Direkt auf dem Mac installieren
 
 Zuerst Apples Command Line Tools installieren, sofern noch nicht vorhanden:
@@ -58,7 +63,22 @@ Zuerst Apples Command Line Tools installieren, sofern noch nicht vorhanden:
 xcode-select --install
 ```
 
-Dann dieses Repo klonen und den Installer aus dem Klon starten:
+Dann das Release-Archiv holen, die Prüfsummen kontrollieren und den Installer starten:
+
+```bash
+curl -LO https://github.com/GodModeAI2025/kimi-k3-in-c-macos/releases/download/v1.5.0/kimi-k3-in-c-macos-1.5.0.zip
+unzip kimi-k3-in-c-macos-1.5.0.zip
+cd kimi-k3-in-c-macos-1.5.0
+shasum -a 256 -c SHA256SUMS
+./install-macos.sh ~/src/kimi-k3-in-c-macos
+```
+
+`shasum -a 256 -c SHA256SUMS` prüft, ob das Archiv in sich stimmig ist. Über die Herkunft
+sagt es nichts: Manifest und Prüfer liegen im selben Archiv, wer eine Datei ändert, erzeugt
+beides neu. Eine Signatur gibt es nicht. Was in einer Version steckt, steht in
+[CHANGELOG.md](CHANGELOG.md).
+
+Wer lieber am Git-Stand arbeitet, klont das Repo und startet den Installer aus dem Klon:
 
 ```bash
 git clone https://github.com/GodModeAI2025/kimi-k3-in-c-macos.git
@@ -157,6 +177,36 @@ schlägt `validate.sh` und mit ihm die CI fehl:
 ./make-sha256sums.sh
 ```
 
+`./validate.sh` läuft auch im entpackten Release-Archiv; die Abdeckungsprüfung des Manifests
+überspringt es dort mit einer Meldung, weil die Git-Metadaten fehlen. `./make-sha256sums.sh`
+gehört dagegen zum Klon und bricht im entpackten Archiv mit `is not the root of a git work
+tree` ab.
+
+## Release bauen
+
+Das Artefakt entsteht lokal, ohne GitHub und ohne Netz:
+
+```bash
+./scripts/make-release-archive.sh dist
+./scripts/check-release-archive.sh dist/kimi-k3-in-c-macos-1.5.0.zip
+```
+
+Auch das ist ein Weg für den Klon: `make-release-archive.sh` nimmt die Dateiliste aus
+`git ls-files` und bricht im entpackten Archiv mit `ist nicht die Wurzel eines
+git-Arbeitsbaums` ab. `check-release-archive.sh` prüft ein fertiges ZIP und braucht kein Repo.
+
+Zwei Läufe liefern dasselbe Archiv, Byte für Byte: alle Zeitstempel im ZIP stehen fest,
+die Dateiliste ist sortiert, und die Modi kommen aus dem Git-Index statt aus der `umask`
+des bauenden Rechners. Was hineingehört, kommt aus `git ls-files`, abzüglich `.github/`
+und `.gitignore`. Das `SHA256SUMS` im Archiv deckt genau den Archivinhalt ab, und jede
+gepackte Datei wird zusätzlich gegen das Manifest des Repos gehalten.
+
+`.github/workflows/release.yml` ruft dieselben Skripte auf, sobald ein Tag `v*` gepusht
+wird, und hängt das Ergebnis an das Release. Die Nummer steht in `VERSION`; ein Tag, das
+nicht `v` plus diese Nummer ist, bricht den Lauf ab, bevor etwas hochgeladen wird. Der
+Text des Releases ist der Abschnitt aus [CHANGELOG.md](CHANGELOG.md), den
+`./scripts/release-notes.sh` ausgibt.
+
 ## Modell und Speicherbedarf
 
 Der macOS-Port verkleinert das Modell nicht. Der Upstream nennt ungefähr **1,56 TB** für
@@ -212,8 +262,9 @@ Der Stand ist ein Schnappschuss. Was ansteht, in dieser Reihenfolge:
    SHA-256 auf `66b13087…` fest, der aktuelle Upstream-Doctor hasht auf `91b5e903…`.
    Gegen Upstream-`main` bricht der Transformer also ab, wie vorgesehen. Der Pin gehört
    zu Punkt 1 und wird nicht einzeln nachgezogen.
-3. **Release oder keins.** `VERSION` steht auf 1.5.0, es gibt weder Tag noch Release.
-   Ein Release friert Punkt 1 ein, kommt also erst danach.
+3. **Was nach 1.5.0 kommt.** `v1.5.0` ist der eingefrorene Schnappschuss auf `85ab2cd9`.
+   Punkt 1 verschwindet dadurch nicht, er wandert in die nächste Nummer: ein Rebase
+   ändert, was das Paket tut, und das ist eine neue Version und kein Nachtrag zu dieser.
 4. **Auf echter Hardware messen.** Für diesen Port existiert kein einziger Durchsatzwert
    auf Apple Silicon. Solange das so bleibt, steht im Abschnitt oben keine Zahl.
 

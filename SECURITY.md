@@ -2,17 +2,20 @@
 
 ## Unterstützte Versionen
 
-Kein Release und kein Tag: `git tag -l` ist leer, die GitHub-API meldet null Releases und null
-Tags. `VERSION` enthält `1.5.0`, wird von keinem Skript gelesen und kommt im Checkout nur in
-dieser einen Datei vor.
+`1.5.0` ist das erste Release dieses Repositoriums, davor gab es weder Tag noch Archiv. Die
+Nummer steht in `VERSION` und nirgendwo sonst. Gelesen wird die Datei von `validate.sh`,
+`scripts/make-release-archive.sh`, `scripts/check-release-archive.sh`,
+`scripts/release-notes.sh` und `.github/workflows/release.yml`, das ein Tag ablehnt, das nicht
+`v` plus diese Nummer ist.
 
 | Stand | unterstützt |
 | --- | --- |
-| aktueller Commit auf `main` | ja |
+| `1.5.0` und der aktuelle Commit auf `main` | ja |
 | ältere Checkouts, Forks, Kopien | nein |
 
-Gemeldet und behoben wird gegen den aktuellen Stand von `main`, Backports gibt es nicht.
-`README.md` Zeile 27 nennt ein ZIP, das nirgends veröffentlicht ist; bezogen wird `main`.
+Gemeldet und behoben wird gegen den aktuellen Stand von `main`, Backports gibt es nicht. Das
+Archiv aus dem Abschnitt „Direkt auf dem Mac installieren“ in `README.md` ist der Stand des
+Releases; wer den neuesten Stand will, klont `main`.
 
 ## Schwachstelle melden
 
@@ -30,12 +33,13 @@ Advisory-Thread ist willkommen.
 ## Bedrohungsmodell
 
 Der Installer klont fremden Code, transformiert ihn und baut ihn, zur Installationszeit statt
-zur Release-Zeit. Es gibt kein eingefrorenes Paket, das jemand vorab prüfen könnte. Ziel eines
-Angriffs ist Codeausführung auf der Maschine des Nutzers während `./install-macos.sh`.
+zur Release-Zeit. Das Release-Archiv friert den Port ein, nicht den Upstream: was gebaut wird,
+holt der Installer beim Lauf, und vorab prüfen lässt sich nur der Port. Ziel eines Angriffs ist
+Codeausführung auf der Maschine des Nutzers während `./install-macos.sh`.
 
 Was der Installer anfasst: ein `git clone` in Zeile 105, sonst kein Netzaufruf; `curl` und
 `wget` kommen im Skript nicht vor. `sudo` steht im ganzen Checkout nur als Wort in einem
-Kommentar (`apply_macos_port.py` Zeile 1114). Nichts läuft als root, und es gibt keinen Daemon.
+Kommentar (`apply_macos_port.py` Zeile 1120). Nichts läuft als root, und es gibt keinen Daemon.
 
 Der Angriffsweg führt über dieses Repo, nicht über Upstream allein. `install-macos.sh`
 Zeile 106 bis 111 checkt den gepinnten Commit aus und vergleicht `rev-parse HEAD` mit dem Pin;
@@ -63,9 +67,10 @@ dem Start lesen kann. Danach fremder Code, den dieses Repo nur an definierten St
 Als vertrauenswürdig behandelt:
 
 - Der Commit `85ab2cd901aa81b70caac7711f06864d594b8ff3` von `FareedKhan-dev/kimi-k3-in-c`,
-  gepinnt an vier Stellen (`install-macos.sh` Zeile 7, `apply_macos_port.py` Zeile 17,
-  `UPSTREAM.md` Zeile 4, `README.md` Zeile 4 und 62). `validate.sh` Zeile 21 bis 22 prüft, dass
-  Installer und Transformer denselben Commit nennen.
+  gepinnt in vier Dateien (`install-macos.sh` Zeile 7, `apply_macos_port.py` Zeile 17,
+  `UPSTREAM.md` Zeile 4 und `README.md` in „Was du bekommst“ und „Einen vorhandenen Checkout
+  portieren“). `validate.sh` Zeile 21 bis 22 prüft, dass Installer und Transformer denselben
+  Commit nennen.
 - Die lokale Toolchain und der Nutzer, der das Skript startet. `install-macos.sh` Zeile 68 bis
   81 prüft, dass die Command Line Tools da sind und `git`, `python3`, `make` und `cc` wirklich
   starten. Woher sie im `PATH` kommen, prüft niemand.
@@ -77,7 +82,7 @@ Als nicht vertrauenswürdig behandelt:
   (Zeile 33, Begründung im Kommentar ab Zeile 28) im Speicher und schreibt sie erst nach der
   letzten erfolgreichen Ersetzung, damit ein Abbruch keinen halb portierten Baum hinterlässt.
 - Der Inhalt der einzigen vollständig ersetzten Datei. `scripts/k3-doctor.sh` ist per SHA-256
-  festgenagelt (`DOCTOR_BASE_SHA256`, Zeile 21, geprüft in Zeile 1194 bis 1200); bei Abweichung
+  festgenagelt (`DOCTOR_BASE_SHA256`, Zeile 21, geprüft in Zeile 1204 bis 1210); bei Abweichung
   verweigert der Transformer die Arbeit, statt lokale Änderungen kommentarlos zu verwerfen.
 
 Was der Pin leistet: der Commit-Name ist ein Inhaltshash über den ganzen Baum, git prüft ihn
@@ -90,28 +95,27 @@ nirgends jemand.
 
 - **Der Installationspfad prüft dieses Paket überhaupt nicht.** `install-macos.sh` nennt weder
   `validate.sh` noch `SHA256SUMS` noch `selftest.py`. Wer nur den Installer startet, bekommt
-  keine Integritätsprüfung der Dateien dieses Repos; das Manifest prüft nur, wer `validate.sh`
-  von Hand aufruft.
+  keine Integritätsprüfung der Dateien dieses Repos. Der dokumentierte Weg setzt
+  `shasum -a 256 -c SHA256SUMS` davor, und `validate.sh` prüft dasselbe Manifest; aufrufen muss
+  beides der Nutzer selbst.
 - **SHA256SUMS beweist keine Authentizität.** Manifest und Prüfer liegen im selben Baum, wer
   eine Datei ändert, erzeugt beides neu. `validate.sh` schreibt das selbst hin (Zeile 55 bis 58
   und 64 bis 67) und meldet den Erfolg als „staleness check, not authenticity“. Abgedeckt sind
-  16 von 18 versionierten Dateien; nicht abgedeckt sind `SHA256SUMS` selbst, das seinen eigenen
-  Hash nicht enthalten kann, und `.gitignore`. Fehlen `sha256sum` und `shasum`, überspringt
-  `validate.sh` Zeile 68 bis 69 die Prüfung kommentarlos.
+  25 von 26 versionierten Dateien; nicht abgedeckt ist allein `SHA256SUMS`, das seinen eigenen
+  Hash nicht enthalten kann. Fehlen `sha256sum` und `shasum`, überspringt `validate.sh`
+  Zeile 68 bis 69 die Prüfung kommentarlos.
 - **Der Pin ist veraltet.** `UPSTREAM.md` Zeile 5 nennt als Stand des Ports den 3. August 2026;
   Upstream `main` liegt inzwischen 36 Commits weiter (`117e9d29`, 26. August 2026, über die
   GitHub-API geprüft am 4. September 2026). Gegen diesen Stand bricht der Port an der
   Doctor-Hash-Prüfung ab (`91b5e903…` gegen gepinnte `66b13087…`), und weil `install-macos.sh`
   unter `set -euo pipefail` läuft, startet der Build nicht. Das ist eine Bremse, keine Prüfung:
   wer den Pin hochzieht und die Kontextfehler nachzieht, baut ungeprüften Code.
-- **Keine CI.** Das Repo hat kein `.github`-Verzeichnis, also läuft bei einem Push weder
-  `validate.sh` noch die Manifest-Prüfung. Die macOS-Jobs, die der Port erzeugt, laufen erst im
-  portierten Upstream-Checkout.
-- **`validate.sh` ist kein stabiles Gate.** `tests/doctor-macos-smoke.sh` erzwingt in Zeile 115
-  eine 1-MB-Leseprobe und verlangt in Zeile 122 eine parsebare Rate. Der Doctor akzeptiert die
-  Messung nur bei `real > 0` (`apply_macos_port.py` Zeile 1110), `/usr/bin/time -p` löst auf
-  0,01 s auf, und die Leseprobe aus dem Cache landet oft genug auf `0.00`. Hier reproduziert:
-  2 Fehlläufe in 12 Durchläufen auf macOS.
+- **Die CI prüft das Paket, nicht die Engine.** `.github/workflows/ci.yml` fährt bei jedem
+  Push auf `main` und in jedem Pull Request gegen `main` die Prüfsuite auf Linux und macOS,
+  dazu die Manifest-Prüfung und den Bau des Release-Archivs. Upstream-Quelltext liegt hier
+  keiner, also baut hier auch nichts die Engine; die macOS-Jobs, die der Port erzeugt, laufen
+  erst im portierten Upstream-Checkout. Im Release-Archiv fehlen die Workflow-Dateien,
+  `.github/` wird nicht mitgepackt.
 - **Vorhersagbare Temp-Pfade.** `validate.sh` und `tests/doctor-macos-smoke.sh` bilden in
   Zeile 5 jeweils `${TMPDIR:-/tmp}/…$$` und legen den Pfad in Zeile 7 mit `mkdir -p` an, das
   auf einem schon existierenden Verzeichnis durchläuft, statt mit `mktemp`. Auf macOS ist
@@ -123,7 +127,7 @@ nirgends jemand.
   schreibt nach `${DEST%/}.patch`, ohne zu prüfen, ob dort schon etwas liegt, obwohl Zeile 97
   genau diese Prüfung für das Zielverzeichnis macht. Das kostet im schlechten Fall eine fremde
   Datei. Codeausführung folgt daraus nicht: die Datei wird von keinem Skript wieder eingelesen
-  und dient laut `README.md` Zeile 54 bis 55 dem Review.
+  und dient laut `README.md`, Abschnitt „Direkt auf dem Mac installieren“, dem Review.
 
 ## Was dieses Projekt nicht leistet
 
@@ -131,7 +135,8 @@ nirgends jemand.
   Mach-VM-Statistiken, `ru_maxrss`) wurden übersetzt und gelesen, nie ausgeführt. Belegt ist
   nur, dass der Port die Referenzplattform Linux/x86-64 nicht beschädigt. `README.md` nennt
   macOS 27 auf Apple Silicon als Ziel, ein passendes Runner-Image existiert nicht. Nachzulesen
-  in `README.md` Zeile 131 bis 147 und `VALIDATION.md` Zeile 170 bis 190.
+  in `README.md` unter „Zielplattform und was die CI davon abdeckt“ und in `VALIDATION.md`
+  unter „Nicht in dieser Umgebung ausführbar“.
 - **Keine Aussage über die Sicherheit der Upstream-Engine.** Geprüft wurden die geänderten
   Stellen, nicht der übrige Inferenz-Code und nicht sein Umgang mit Modelldateien.
 - **Keine Sandbox.** Build und Tests laufen mit den vollen Rechten des Nutzers in dessen

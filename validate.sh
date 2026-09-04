@@ -99,4 +99,22 @@ printf '%s\n' "$PKG_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
     exit 1
 }
 
+# VERSION is the only place the number lives. Everything else reads it: the archive name,
+# the CHANGELOG entry and the download URL in the instructions. Check that here, so a
+# bumped number without an entry and without adjusted instructions surfaces now and not
+# when the tag is pushed. All three checks are offline and need no git metadata, which is
+# why they also run inside an unpacked release archive.
+"$HERE/scripts/release-notes.sh" > /dev/null
+echo "validate: CHANGELOG.md has an entry for version $PKG_VERSION"
+
+ARTEFAKT=$("$HERE/scripts/make-release-archive.sh" --print-name)
+ASSET_PATH="releases/download/v$PKG_VERSION/$ARTEFAKT"
+for f in README.md CHANGELOG.md; do
+    grep -qF "$ASSET_PATH" "$HERE/$f" || {
+        echo "validate: $f does not name $ASSET_PATH" >&2
+        exit 1
+    }
+done
+echo "validate: the documented download path matches $ARTEFAKT"
+
 echo "validate: package checks passed for version $PKG_VERSION"

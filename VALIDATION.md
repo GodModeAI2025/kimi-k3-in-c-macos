@@ -96,11 +96,20 @@ validate: Darwin API syntax smoke passed
 validate: arm64 NEON compile smoke passed (no fused multiply-add)
 validate: SHA256SUMS is self-consistent (staleness check, not authenticity)
 validate: SHA256SUMS lists every versioned file except itself
+validate: CHANGELOG.md has an entry for version 1.5.0
+validate: the documented download path matches kimi-k3-in-c-macos-1.5.0.zip
 validate: package checks passed for version 1.5.0
 ```
 
 Die Versionsnummer der letzten Zeile stammt aus `VERSION`. `validate.sh` liest die Datei
 und bricht ab, wenn dort keine dreiteilige Nummer steht.
+
+`VERSION` ist die einzige Stelle, an der die Nummer gepflegt wird. Die letzten beiden
+Prüfungen halten alles andere daran fest: `CHANGELOG.md` muss einen Abschnitt zu dieser
+Nummer haben, und `README.md` wie `CHANGELOG.md` müssen genau den Pfad
+`releases/download/v<Nummer>/<Archivname>` nennen, den
+`scripts/make-release-archive.sh --print-name` erzeugt. Beide Prüfungen laufen offline
+und ohne Git-Metadaten, also auch in einem entpackten Release-Archiv.
 
 Das Manifest wird nicht von Hand gepflegt, sondern mit `./make-sha256sums.sh` aus
 `git ls-files` erzeugt. `validate.sh` prüft beide Hälften: die Hashes der gelisteten
@@ -114,7 +123,10 @@ nicht darin, eine Prüfsummendatei enthält ihre eigene Prüfsumme nicht.
 - `paket-linux` auf `ubuntu-latest`: `selftest.py`, die drei Python-Smoke-Tests unter `tests/`,
   `bash -n` für die Shell-Skripte des Pakets, die Abdeckung von `SHA256SUMS` gegen
   `git ls-files` sowie zwei Konsistenzprüfungen zwischen Code und Dokumentation, nämlich
-  der Upstream-Commit und das Ziel des Badges.
+  der Upstream-Commit und das Ziel des Badges. Dazu die Release-Kette: das Archiv wird
+  zweimal gebaut und byteweise verglichen, `scripts/check-release-archive.sh` prüft
+  Inhalt, verbotene Einträge, die Ausführbarkeit der Skripte und `SHA256SUMS` im
+  entpackten Archiv, und der Release-Text wird aus `CHANGELOG.md` gelöst.
 - `vollpruefung-macos` auf `macos-latest`: `./validate.sh` vollständig, danach eine
   Prüfung, dass die plattformabhängigen Blöcke wirklich gelaufen sind. `validate.sh`
   überspringt einzelne Blöcke mit einer Meldung und bleibt grün, wenn `cc`, `clang`, ein
@@ -126,9 +138,21 @@ nicht darin, eine Prüfsummendatei enthält ihre eigene Prüfsumme nicht.
   `clang` genügt CMake auch ohne `cc`. Auf dem macOS-Runner, dessen Userland dieses Paket
   abbildet, ist ein übersprungener Lauf kein Erfolg.
 
+`.github/workflows/release.yml` läuft nur auf ein Tag `v*`. Es enthält keine
+Packaging-Logik: es lehnt ein Tag ab, das nicht `v` plus `VERSION` ist, ruft
+`scripts/make-release-archive.sh` und `scripts/check-release-archive.sh` auf und hängt das
+Archiv mit `softprops/action-gh-release@v2` an das Release. Dieselben Skripte laufen in
+`ci.yml` und von Hand, deshalb ist der Tag-Lauf keine Premiere.
+
+Beide Workflow-Dateien liegen nur im Repositorium. Das Release-Archiv packt `.github/` nicht
+mit, wer diesen Abschnitt im entpackten Archiv liest, findet die beiden Dateien dort also
+nicht. Nachzulesen sind sie im Repositorium unter `.github/workflows/`.
+
 Was diese CI **nicht** prüft: sie klont den Upstream nicht, baut die Engine nicht und
 lädt keine Gewichte. Ein grünes Badge belegt den Zustand des Pakets, nicht dass der
-portierte Baum auf Apple Silicon übersetzt.
+portierte Baum auf Apple Silicon übersetzt. Der Reproduzierbarkeitsvergleich gilt für zwei
+Läufe auf demselben Rechner mit derselben `zip`-Version; über Rechnergrenzen hinweg ist er
+nicht geprüft.
 
 ## Zweite Review-Runde: was gegen Apples Quellen geprüft wurde
 
