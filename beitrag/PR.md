@@ -72,8 +72,9 @@ A Mac with a half-installed libomp, header present and dylib missing or the reve
 builds serial where it previously failed at the link. That is the intended behaviour, but
 it is quieter: someone who expects threads gets three `$(warning)` lines rather than a
 stopped build. Since `18b5129` that serial build also reads each trunk layer one chunk at
-a time instead of in parallel, which is what the warning is there to surface. `OMP_CFLAGS`/`OMP_LDFLAGS` keep `?=`, so an explicit setting on the command
-line or in the environment still overrides the detection in either direction.
+a time instead of in parallel, which is what the warning is there to surface.
+`OMP_CFLAGS`/`OMP_LDFLAGS` keep `?=`, so an explicit setting on the command line or in the
+environment still overrides the detection in either direction.
 
 The change is confined to the `Darwin` branch of the platform block; the Linux, MinGW and
 generic branches are untouched, and the CI addition is a step inside the existing
