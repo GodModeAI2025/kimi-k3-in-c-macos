@@ -125,3 +125,48 @@ deklariert; das ist eine Entscheidung des Upstream-Eigentümers und nicht die So
 Änderung, die man ungefragt als Patch schickt. Die Speichererkennung ist ein zweiter,
 unabhängiger Eingriff, der einen zweiten Pull Request braucht, wenn der erste angenommen
 ist.
+
+## Nachmessung gegen Upstream-`main`, 16. September 2026
+
+Gemessener Stand: `ac1584a70205c3a00d5346f736834818f4cc11b4` vom 10. September 2026, fünf
+Commits nach `117e9d29` und 41 nach dem Pin. Anders als die Messung oben ist diese rein
+textlich: gelaufen sind `upstream-delta.py`, `git apply --check` und `git am` auf einem
+Wegwerf-Checkout. Gebaut und getestet wurde der Upstream dabei nicht.
+
+### Was sich bewegt hat
+
+| Commit | Inhalt | berührt den Port |
+| --- | --- | --- |
+| `8d71cfe` | CI installiert `tiktoken` und `ruff` in festen Versionen | nein |
+| `18b5129` | `load_run()` in `src/io/k3_trunk.c` liest eine Trunk-Schicht in 64-MiB-Blöcken parallel unter `#pragma omp parallel for` | nur über OpenMP, siehe unten |
+| `1e97491` | CLI-Option `--stop-id`, dazu ein Vertragstest im `test`-Ziel des Makefile | nein, außerhalb des Plattformblocks |
+| `53f7248` | `--gen 0` füllt nur den Prefix-Zustand | nein |
+| `ac1584a` | Dokumentation der drei Änderungen | nein |
+
+### Ergebnis
+
+`upstream-delta.py` liefert auf `ac1584a` Zeile für Zeile dieselbe Ausgabe wie auf
+`117e9d29`: 15 `DELTA-BLEIBT`, 22 `KONTEXT-GEAENDERT`, 1 `NEU`, 2 `UPSTREAM-HAT-ES`,
+1 `ABBRUCH`. Der Doctor hasht weiter auf `91b5e903…`, `mem_available_bytes()` liest weiter
+`/proc/meminfo`. Die Tabelle der offenen Punkte oben gilt unverändert; ihre
+Zeilennummern beziehen sich auf `117e9d29`.
+
+Der Patch in [`beitrag/`](beitrag/README.md) lässt sich ohne Änderung anwenden:
+`git apply --check` ist still, `git am` legt den Commit auf `ac1584a` ab. Die
+Voraussetzung, auf der er beruht, gilt auch mit dem neuen Code: alle acht
+`#pragma omp`-Stellen in `src/` stehen hinter `#ifdef _OPENMP`, und `<omp.h>` wird
+nirgends eingebunden.
+
+### Was `18b5129` für den Beitrag bedeutet
+
+Bisher betraf OpenMP die Rechenkerne und das parallele Laden der Experten. Seit
+`18b5129` hängt auch das Lesen des Trunks daran: mit OpenMP gehen die Blöcke einer
+Schicht gleichzeitig an die SSD, ohne OpenMP laufen sie nacheinander, was dem Verhalten
+vor diesem Commit entspricht. Für den Patch heißt das: ein Build ohne libomp ist
+weiterhin korrekt, aber er verzichtet jetzt auch beim Laden des Trunks auf Parallelität.
+Die drei `$(warning)`-Zeilen, die der Patch in diesem Fall ausgibt, sind damit wichtiger
+als am 4. September.
+
+Für den Port selbst ändert sich nichts. Er bleibt auf `85ab2cd9` und hat den parallelen
+Trunk-Leser nicht, das ist eine weitere Zeile auf der Seite „mit einem frischen
+Upstream-Checkout anfangen“.

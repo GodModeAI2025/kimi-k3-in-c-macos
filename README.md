@@ -286,7 +286,7 @@ Der Stand ist ein Schnappschuss. Was ansteht, in dieser Reihenfolge:
    einer klein und wichtig genug für einen eigenen Pull Request: der Upstream setzt auf
    Darwin unbedingt `-lomp`, womit `make` auf einem Mac ohne Homebrew-libomp am Linker
    stirbt. Der Patch dagegen liegt fertig in [`beitrag/`](beitrag/README.md), geprüft
-   gegen `117e9d2`. Eingereicht ist er nicht, das ist der nächste Schritt und eine
+   gegen `117e9d2` und textlich nachgemessen gegen `ac1584a`. Eingereicht ist er nicht, das ist der nächste Schritt und eine
    Handlung des Eigentümers: `beitrag/einreichen.sh`. Die Messung steht in
    [UPSTREAM.md](UPSTREAM.md).
 2. **Doctor-Pin nachziehen.** `apply_macos_port.py` nagelt `scripts/k3-doctor.sh` per
