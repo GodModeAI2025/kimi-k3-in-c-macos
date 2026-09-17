@@ -12,7 +12,7 @@ Upstream und keinen Pull Request. Gegen den echten Upstream ist `einreichen.sh` 
 
 | Datei | Inhalt |
 | --- | --- |
-| `0001-build-without-openmp-when-libomp-is-absent-on-macos.patch` | der Patch, `git format-patch` gegen `117e9d2` |
+| `0001-build-without-openmp-when-libomp-is-absent-on-macos.patch` | der Patch, `git format-patch` gegen `117e9d2`; lässt sich unverändert auf `ac1584a` anwenden, siehe [Nachmessung](../UPSTREAM.md#nachmessung-gegen-upstream-main-16-september-2026) |
 | `PR.md` | der Text des Pull Requests, nach der Vorlage aus `.github/PULL_REQUEST_TEMPLATE.md` des Upstream |
 | `einreichen.sh` | Probelauf und Einreichung |
 

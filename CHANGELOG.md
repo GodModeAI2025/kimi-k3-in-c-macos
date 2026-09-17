@@ -38,6 +38,10 @@ Upstream-Quelltext macht, ändert sich nichts. Der Pin bleibt `85ab2cd9`,
 - `beitrag/` hält den einen Punkt bereit, der nach der Messung als eigenständiger Beitrag
   taugt: die libomp-Erkennung im Makefile des Upstream, als Patch gegen `117e9d2`, mit
   Pull-Request-Text und einem Skript, das ihn einreicht. Eingereicht ist nichts.
+- `UPSTREAM.md` hat eine Nachmessung gegen `ac1584a`, fünf Commits nach `117e9d29`:
+  `upstream-delta.py` liefert dieselbe Ausgabe, der Patch unter `beitrag/` lässt sich
+  unverändert anwenden, und der neue parallele Trunk-Leser des Upstream (`18b5129`)
+  läuft nur mit OpenMP. `beitrag/PR.md` nennt das im Abschnitt zum Risiko.
 - Der Abschnitt zu CPU-Streaming und MLX-Quants in `README.md` hat jetzt eine Zeile zur
   Qualität und drei Fragen, an denen sich die Entscheidung entlanghangeln lässt.
 
