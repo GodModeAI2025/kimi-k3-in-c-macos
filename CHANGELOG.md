@@ -44,6 +44,15 @@ Upstream-Quelltext macht, ändert sich nichts. Der Pin bleibt `85ab2cd9`,
   läuft nur mit OpenMP. `beitrag/PR.md` nennt das im Abschnitt zum Risiko.
 - Der Abschnitt zu CPU-Streaming und MLX-Quants in `README.md` hat jetzt eine Zeile zur
   Qualität und drei Fragen, an denen sich die Entscheidung entlanghangeln lässt.
+- Derselbe Abschnitt behauptete, MLX halte die Gewichte im Unified Memory, und leitete
+  daraus ab, der Weg sei für K3 arithmetisch verstellt. Das gilt für die üblichen
+  MLX-Runner, nicht für MLX. `Ibarakilol/mlx-lean-moe` (MIT, 13. September 2026) hält auf
+  `mlx.core` nur die immer aktiven Gewichte resident und lädt die geroutete Auswahl von
+  der Platte nach, gemessen mit 2,10 GiB Spitzenspeicher bei 19 GiB Checkpoint auf einem
+  8-GB-M1. Für K3 bliebe damit der Trunk resident, rund 109 GB, woran 512 GB nicht
+  scheitern. Die Empfehlung steht unverändert, der Grund ist jetzt der richtige: eine
+  solche Engine gibt es für die K3-Architektur nicht, und gemessen ist hier ohnehin kein
+  MLX-Modell.
 
 ### Installieren
 
