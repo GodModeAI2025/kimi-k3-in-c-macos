@@ -238,10 +238,29 @@ Doctor weist alles unter 10 GiB installiertem Speicher ab.
 ## CPU-Streaming oder MLX-Quants
 
 Die Frage kommt oft, und für Kimi K3 fällt die Antwort kurz aus: eine MLX-Variante dieses
-Modells passt auf keinen Mac. Das ist Arithmetik, keine Messung. Kimi K3 hat 2,78
-Billionen Parameter. Bei 4 Bit pro Parameter liegen allein die Gewichte bei rund 1,4 TB,
-der größte lieferbare Mac hat 512 GB Unified Memory. MLX hält die Gewichte im Unified
-Memory, also fehlt selbst nach einer aggressiven Quantisierung fast der Faktor drei.
+Modells, die die Gewichte im Speicher hält, passt auf keinen Mac. Das ist Arithmetik,
+keine Messung. Kimi K3 hat 2,78 Billionen Parameter. Bei 4 Bit pro Parameter liegen allein
+die Gewichte bei rund 1,4 TB, der größte lieferbare Mac hat 512 GB Unified Memory. Nach
+einer aggressiven Quantisierung fehlt also fast der Faktor drei.
+
+Der Halbsatz „die die Gewichte im Speicher hält“ steht seit dem 20. September 2026 da.
+Vorher stand hier, MLX halte die Gewichte im Unified Memory. Jedes MLX-Array liegt im
+Unified Memory, das ist die Architektur; falsch war der stille Zusatz, dort müssten alle
+Gewichte gleichzeitig liegen. Das tun die üblichen MLX-Runner, MLX
+verlangt es nicht. Ein Gegenbeispiel auf derselben Grundlage ist
+[mlx-lean-moe](https://github.com/Ibarakilol/mlx-lean-moe) (MIT, angelegt am 13. September
+2026). Es fährt ein MoE-Modell auf `mlx.core`, hält nur die immer aktiven Gewichte
+resident und lädt die vom Router ausgewählten Experten von der Platte nach — derselbe
+Griff wie hier, nur auf der GPU statt auf der CPU. Gemessen auf einem 8-GB-M1: 2,10 GiB
+Spitzenspeicher (`mx.get_peak_memory()`; die Prozess-RSS schwankte dort zwischen 1,9 und
+3,1 GiB) bei einem Checkpoint von 19 GiB und rund 5 Token pro Sekunde.
+
+An der Empfehlung ändert das nichts, wohl aber an ihrer Begründung. Eine Engine dieser
+Bauart müsste für K3 den Trunk resident halten, also die rund 109 GB, und nur die Experten
+streamen; daran scheitern 512 GB nicht mehr. Nur gibt es sie für K3 nicht. mlx-lean-moe
+liest 4-Bit-Qwen3.5-MoE, keine K3-Architektur, und in diesem Repo ist nie ein MLX-Modell
+gelaufen. Der Weg über MLX ist für dieses Modell also nicht durch Arithmetik verstellt,
+sondern dadurch, dass ihn niemand gebaut hat.
 
 Die Entscheidung, die sich wirklich stellt, ist deshalb eine andere:
 
